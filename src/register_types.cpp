@@ -1,3 +1,4 @@
+#include "desktop_capture.h"
 #include "viture_glasses.h"
 
 #include <gdextension_interface.h>
@@ -11,6 +12,8 @@ static void initialize_viture_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	GDREGISTER_CLASS(DesktopCapture);
+	GDREGISTER_CLASS(VitureXRInterface);
 	GDREGISTER_CLASS(VitureGlasses);
 }
 

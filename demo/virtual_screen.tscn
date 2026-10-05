@@ -1,0 +1,23 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://virtual_screen.gd" id="1"]
+
+[node name="VirtualScreen" type="Node3D"]
+script = ExtResource("1")
+
+[node name="XROrigin3D" type="XROrigin3D" parent="."]
+
+[node name="Head" type="XRCamera3D" parent="XROrigin3D"]
+fov = 27.0
+
+[node name="Anchor" type="Node3D" parent="."]
+
+[node name="Screen" type="MeshInstance3D" parent="Anchor"]
+
+[node name="Status" type="Label3D" parent="Anchor"]
+pixel_size = 0.001
+font_size = 24
+outline_size = 6
+
+[node name="Glasses" type="VitureGlasses" parent="."]
+target = NodePath("../XROrigin3D/Head")

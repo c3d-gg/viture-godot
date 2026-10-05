@@ -5,6 +5,8 @@
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/viewport.hpp>
+#include <godot_cpp/classes/xr_server.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -13,6 +15,11 @@ using namespace godot;
 
 viture::Api VitureGlasses::api;
 VitureGlasses *VitureGlasses::active_instance = nullptr;
+
+VitureGlasses::VitureGlasses() {
+	// Created up front so stereo settings can be tuned before stereo is enabled.
+	xr_interface.instantiate();
+}
 
 VitureGlasses::~VitureGlasses() {
 	stop();
@@ -29,14 +36,10 @@ void VitureGlasses::_ready() {
 }
 
 void VitureGlasses::_process(double p_delta) {
-	if (!running || !poll_raw_pose()) {
+	if (!running) {
 		return;
 	}
-	if (!has_pose) {
-		has_pose = true;
-		recenter();
-	}
-	pose = reference.affine_inverse() * raw_pose;
+	update_pose();
 
 	if (!target.is_empty()) {
 		Node3D *node = Object::cast_to<Node3D>(get_node_or_null(target));
@@ -159,6 +162,9 @@ bool VitureGlasses::start() {
 	has_pose = false;
 	tracking_stable = false;
 	last_error = String();
+	if (stereo) {
+		apply_stereo(true);
+	}
 	emit_signal("started");
 	return true;
 }
@@ -167,6 +173,7 @@ void VitureGlasses::stop() {
 	if (!running) {
 		return;
 	}
+	apply_stereo(false);
 	running = false;
 	if (device_type != DEVICE_TYPE_CARINA && api.close_imu) {
 		api.close_imu(handle, VITURE_IMU_MODE_POSE);
@@ -238,8 +245,45 @@ bool VitureGlasses::poll_raw_pose() {
 	return true;
 }
 
-Transform3D VitureGlasses::get_pose() {
-	return pose;
+void VitureGlasses::update_pose() {
+	if (!running || !poll_raw_pose()) {
+		return;
+	}
+	if (!has_pose) {
+		has_pose = true;
+		recenter();
+	}
+	pose = reference.affine_inverse() * raw_pose;
+}
+
+void VitureGlasses::set_stereo(bool p_enabled) {
+	stereo = p_enabled;
+	if (running) {
+		apply_stereo(stereo);
+	}
+}
+
+void VitureGlasses::apply_stereo(bool p_enabled) {
+	if (p_enabled == stereo_active || (p_enabled && !is_inside_tree())) {
+		return;
+	}
+	XRServer *xr_server = XRServer::get_singleton();
+	if (p_enabled) {
+		xr_interface->set_glasses(this);
+		xr_server->add_interface(xr_interface);
+		xr_interface->initialize();
+		get_viewport()->set_use_xr(true);
+		set_display_3d(true);
+	} else {
+		set_display_3d(false);
+		if (is_inside_tree()) {
+			get_viewport()->set_use_xr(false);
+		}
+		xr_interface->uninitialize();
+		xr_server->remove_interface(xr_interface);
+		xr_interface->set_glasses(nullptr);
+	}
+	stereo_active = p_enabled;
 }
 
 void VitureGlasses::recenter() {
@@ -300,7 +344,19 @@ int VitureGlasses::set_brightness(int p_level) {
 	return api.set_brightness_level(handle, p_level);
 }
 
+bool VitureGlasses::extend_desktop() {
+	// Same as Win+P > Extend. Needed after a display-mode switch: Windows sees
+	// the glasses as a new monitor and doesn't add it to the desktop by itself.
+	long result = viture::extend_desktop();
+	if (result != 0) {
+		UtilityFunctions::push_error("VitureGlasses: SetDisplayConfig(extend) failed (", static_cast<int64_t>(result), ").");
+		return false;
+	}
+	return true;
+}
+
 void VitureGlasses::_bind_methods() {
+	ClassDB::bind_static_method("VitureGlasses", D_METHOD("extend_desktop"), &VitureGlasses::extend_desktop);
 	ClassDB::bind_method(D_METHOD("start"), &VitureGlasses::start);
 	ClassDB::bind_method(D_METHOD("stop"), &VitureGlasses::stop);
 	ClassDB::bind_method(D_METHOD("is_running"), &VitureGlasses::is_running);
@@ -331,6 +387,9 @@ void VitureGlasses::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_prediction_ms"), &VitureGlasses::get_prediction_ms);
 	ClassDB::bind_method(D_METHOD("set_target", "target"), &VitureGlasses::set_target);
 	ClassDB::bind_method(D_METHOD("get_target"), &VitureGlasses::get_target);
+	ClassDB::bind_method(D_METHOD("set_stereo", "enabled"), &VitureGlasses::set_stereo);
+	ClassDB::bind_method(D_METHOD("get_stereo"), &VitureGlasses::get_stereo);
+	ClassDB::bind_method(D_METHOD("get_xr_interface"), &VitureGlasses::get_xr_interface);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "library_path", PROPERTY_HINT_FILE, "*.dll"), "set_library_path", "get_library_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "product_id"), "set_product_id", "get_product_id");
@@ -338,6 +397,7 @@ void VitureGlasses::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "enable_6dof"), "set_enable_6dof", "get_enable_6dof");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "prediction_ms", PROPERTY_HINT_RANGE, "0,50,0.1,suffix:ms"), "set_prediction_ms", "get_prediction_ms");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_target", "get_target");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stereo"), "set_stereo", "get_stereo");
 
 	ADD_SIGNAL(MethodInfo("started"));
 	ADD_SIGNAL(MethodInfo("stopped"));

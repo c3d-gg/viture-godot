@@ -112,4 +112,8 @@ std::vector<int> find_connected_product_ids() {
 	return ids;
 }
 
+long extend_desktop() {
+	return SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
+}
+
 } // namespace viture

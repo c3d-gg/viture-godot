@@ -69,4 +69,7 @@ private:
 // Product IDs of every connected USB device with the VITURE vendor ID.
 std::vector<int> find_connected_product_ids();
 
+// Applies the Windows "Extend" display topology; returns a Win32 error code.
+long extend_desktop();
+
 } // namespace viture

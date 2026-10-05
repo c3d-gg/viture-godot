@@ -1,11 +1,15 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 import os
+
+# DesktopCapture uses C++/WinRT, which requires exceptions (godot-cpp
+# disables them by default).
+ARGUMENTS.setdefault("disable_exceptions", "no")
 
 env = SConscript("godot-cpp/SConstruct")
 
 env.Append(CPPPATH=["src/", "thirdparty/viture-sdk-windows/include/"])
 if env["platform"] == "windows":
-    env.Append(LIBS=["setupapi"])
+    env.Append(LIBS=["setupapi", "d3d11", "dxgi", "windowsapp", "user32"])
 
 sources = Glob("src/*.cpp")
 

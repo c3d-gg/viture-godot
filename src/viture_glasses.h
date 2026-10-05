@@ -1,6 +1,7 @@
 #pragma once
 
 #include "viture_sdk.h"
+#include "viture_xr_interface.h"
 
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/variant/node_path.hpp>
@@ -28,6 +29,7 @@ public:
 		DEVICE_TYPE_CARINA = XR_DEVICE_TYPE_VITURE_CARINA,
 	};
 
+	VitureGlasses();
 	~VitureGlasses();
 
 	void _ready() override;
@@ -44,7 +46,8 @@ public:
 	String get_market_name() const;
 	String get_sdk_version() const;
 
-	Transform3D get_pose();
+	void update_pose();
+	Transform3D get_pose() const { return pose; }
 	bool is_tracking_stable() const { return tracking_stable; }
 	void recenter();
 	void reset_tracking();
@@ -54,6 +57,7 @@ public:
 	int set_display_mode(int p_mode);
 	int get_brightness() const;
 	int set_brightness(int p_level);
+	static bool extend_desktop();
 
 	void set_library_path(const String &p_path) { library_path = p_path; }
 	String get_library_path() const { return library_path; }
@@ -67,6 +71,9 @@ public:
 	double get_prediction_ms() const { return prediction_ms; }
 	void set_target(const NodePath &p_target) { target = p_target; }
 	NodePath get_target() const { return target; }
+	void set_stereo(bool p_enabled);
+	bool get_stereo() const { return stereo; }
+	Ref<VitureXRInterface> get_xr_interface() const { return xr_interface; }
 
 protected:
 	static void _bind_methods();
@@ -84,6 +91,10 @@ private:
 	bool enable_6dof = true; // Carina only; applied at start().
 	double prediction_ms = 0.0;
 	NodePath target;
+	bool stereo = false;
+
+	Ref<VitureXRInterface> xr_interface;
+	bool stereo_active = false;
 
 	viture::Handle handle = nullptr;
 	bool running = false;
@@ -106,6 +117,7 @@ private:
 	int detect_product_id();
 	bool fail(const String &p_message);
 	bool poll_raw_pose();
+	void apply_stereo(bool p_enabled);
 };
 
 } // namespace godot
