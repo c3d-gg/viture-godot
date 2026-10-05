@@ -89,9 +89,20 @@ instead of being limited to the fixed display in the glasses. Run it with:
 ```
 
 It switches the glasses to 1920x1200 @ 120 Hz, goes fullscreen on them (Windows must be on **Extend**), and
-captures the primary monitor. Keys: Space pins the screen where you are looking, W/S raise/lower,
-Up/Down closer/further, Left/Right size, B shows the display edges, [ / ] field of view, H cycles display
-modes, M next monitor.
+captures the primary monitor. Placement and settings persist in `user://virtual_screen.cfg`.
+
+Global hotkeys (any app has focus, via `GlobalHotkeys` / Win32 `RegisterHotKey`):
+
+| Hotkey | Action |
+| --- | --- |
+| Ctrl+Alt+Shift+Space | Pin the screen where you are looking |
+| Ctrl+Alt+Shift+S | Show/hide the settings window |
+| Ctrl+Alt+Shift+PageUp / PageDown | Raise / lower the screen |
+
+The settings window opens on the primary desktop, so it appears inside the virtual screen and works with the
+mouse. A tray icon gives the same: left-click for settings, right-click for a menu. While the app or its
+settings window has focus: Space pin, W/S raise/lower, Up/Down distance, Left/Right size, [ / ] field of view,
+B display edges, H display mode, M monitor.
 
 `DesktopCapture` uses Windows Graphics Capture (C++/WinRT, so the build enables exceptions). DXGI Desktop
 Duplication doesn't work on hybrid-GPU laptops when the captured monitor is on the other GPU.

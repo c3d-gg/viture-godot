@@ -1,4 +1,5 @@
 #include "desktop_capture.h"
+#include "global_hotkeys.h"
 #include "viture_glasses.h"
 
 #include <gdextension_interface.h>
@@ -13,6 +14,7 @@ static void initialize_viture_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	GDREGISTER_CLASS(DesktopCapture);
+	GDREGISTER_CLASS(GlobalHotkeys);
 	GDREGISTER_CLASS(VitureXRInterface);
 	GDREGISTER_CLASS(VitureGlasses);
 }
