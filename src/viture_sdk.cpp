@@ -122,6 +122,45 @@ bool claim_single_instance(const std::wstring &p_name) {
 	return mutex && GetLastError() != ERROR_ALREADY_EXISTS;
 }
 
+static const wchar_t *RUN_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+bool set_run_at_login(const std::wstring &p_name, const std::wstring &p_command, bool p_enabled) {
+	HKEY key;
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) {
+		return false;
+	}
+	LSTATUS result;
+	if (p_enabled) {
+		result = RegSetValueExW(key, p_name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE *>(p_command.c_str()),
+				static_cast<DWORD>((p_command.size() + 1) * sizeof(wchar_t)));
+	} else {
+		result = RegDeleteValueW(key, p_name.c_str());
+		if (result == ERROR_FILE_NOT_FOUND) {
+			result = ERROR_SUCCESS;
+		}
+	}
+	RegCloseKey(key);
+	return result == ERROR_SUCCESS;
+}
+
+bool is_run_at_login(const std::wstring &p_name) {
+	HKEY key;
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
+		return false;
+	}
+	bool exists = RegQueryValueExW(key, p_name.c_str(), nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS;
+	RegCloseKey(key);
+	return exists;
+}
+
+void set_window_shown(int64_t p_hwnd, bool p_shown) {
+	ShowWindow(reinterpret_cast<HWND>(p_hwnd), p_shown ? SW_SHOW : SW_HIDE);
+}
+
+bool is_window_shown(int64_t p_hwnd) {
+	return IsWindowVisible(reinterpret_cast<HWND>(p_hwnd));
+}
+
 std::wstring find_glasses_display() {
 	DISPLAY_DEVICEW adapter = {};
 	adapter.cb = sizeof(adapter);

@@ -14,6 +14,10 @@ extends Node3D
 ## W/S = raise/lower, Up/Down = closer/further, Left/Right = size,
 ## [ / ] = field of view, B = display edges, H = next display mode.
 ##
+## Without the glasses it waits in the tray (window hidden, nearly idle) and
+## wakes up when they're plugged in; unplugging puts it back to sleep. Settings
+## and the tray can add it to Windows' login items so it's always waiting.
+##
 ## Everything is saved to user://virtual_screen.cfg.
 
 const CONFIG := "user://virtual_screen.cfg"
@@ -36,6 +40,8 @@ const PITCH_STEP := deg_to_rad(1.5)
 const SNAP_ANGLE := deg_to_rad(8.0)
 const LOOK_AT_ANGLE := deg_to_rad(30.0) # How close to a screen's centre counts as looking at it.
 const ScreenPanel := preload("res://screen_panel.gd")
+const APP_ID := "VitureVirtualScreens" # Single-instance lock and login item name.
+const POLL_SECONDS := 2.0 # How often to look for the glasses being plugged in or out.
 
 @export var fov := 52.0 ## Diagonal field of view of the glasses, degrees.
 @export_range(0.0, 1.0) var sharpness := 0.3 ## Extra text crispness on every screen.
@@ -58,6 +64,9 @@ var virtual_displays := VirtualDisplays.new()
 var cursor_fence := CursorFence.new()
 var failed_hotkeys: PackedStringArray = []
 
+var active := false # Glasses connected and the session running.
+var saved_screens: Array = [] # Screen layouts, kept while waiting for the glasses.
+
 var settings: Window
 var tray: StatusIndicator
 var tray_menu: PopupMenu
@@ -68,12 +77,10 @@ var _ui := {}
 func _ready() -> void:
 	# A second copy would fight the first over the glasses, hotkeys and
 	# virtual monitors, so only one may run.
-	if not VitureGlasses.claim_single_instance("VitureVirtualScreens"):
-		OS.alert("VITURE virtual screens is already running.
-Look for its icon in the system tray.", "Already running")
+	if not VitureGlasses.claim_single_instance(APP_ID):
+		OS.alert("VITURE virtual screens is already running.\nLook for its icon in the system tray.", "Already running")
 		get_tree().quit()
 		return
-	glasses.start() # Not auto-started, so a second copy never touches the glasses.
 
 	# Black is see-through on the glasses' OLED optics.
 	RenderingServer.set_default_clear_color(Color.BLACK)
@@ -82,18 +89,7 @@ Look for its icon in the system tray.", "Already running")
 	add_child(cursor_fence)
 	get_window().size_changed.connect(_update_camera_fov)
 	glasses.state_changed.connect(_on_glasses_state)
-	print("Monitors: ", DesktopCapture.get_monitor_names())
-
 	_load_config()
-	if panels.is_empty():
-		_add_panel(_device_of(DesktopCapture.get_monitor_names()[maxi(0, _find_primary())]))
-	selected = panels[0]
-	_go_fullscreen_on_glasses.call_deferred()
-
-	if glasses.is_running():
-		display_mode = glasses.get_display_mode()
-		if display_mode != preferred_display_mode:
-			_set_display_mode(preferred_display_mode)
 
 	add_child(hotkeys)
 	hotkeys.hotkey_pressed.connect(_do)
@@ -103,10 +99,98 @@ Look for its icon in the system tray.", "Already running")
 
 	_build_settings_window()
 	_build_tray()
-	_refit_soon(false) # Arrange the desktop around the saved screens.
+	if VitureGlasses.is_run_at_login(APP_ID):
+		_set_start_with_windows(true) # Keep the command current if the project moved.
+
+	_enter_waiting()
+	var poll := Timer.new()
+	poll.wait_time = POLL_SECONDS
+	poll.timeout.connect(_poll_glasses)
+	add_child(poll)
+	poll.start()
+	_poll_glasses()
+
+
+# --- Waiting / active ------------------------------------------------------------------
+
+func _poll_glasses() -> void:
+	var connected := glasses.is_glasses_connected()
+	if connected and not active:
+		_activate()
+	elif not connected and active:
+		_deactivate()
+
+
+## Glasses plugged in: connect, restore the screens and go fullscreen on them.
+func _activate() -> void:
+	if not glasses.start():
+		return # Not ready yet (e.g. still enumerating); the next poll retries.
+	active = true
+	print("Glasses connected. Monitors: ", DesktopCapture.get_monitor_names())
+	OS.low_processor_usage_mode = false
+	Engine.max_fps = 0
+	VitureGlasses.set_native_window_shown(DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE), true)
+
+	_restore_screens()
+	if panels.is_empty():
+		_add_panel(_device_of(DesktopCapture.get_monitor_names()[maxi(0, _find_primary())]))
+	selected = panels[0]
+
+	display_mode = glasses.get_display_mode()
+	if display_mode != preferred_display_mode:
+		_set_display_mode(preferred_display_mode)
+	tray.tooltip = "VITURE virtual screens"
+	_refit_soon() # Arrange the desktop, go fullscreen on the glasses, start captures.
+	_sync_settings()
+
+
+## Glasses unplugged: save, remove the virtual monitors and wait in the tray.
+func _deactivate() -> void:
+	print("Glasses disconnected; waiting in the tray.")
+	_save_config()
+	active = false
+	grabbed = null
+	looked_at = null
+	selected = null
+	for panel in panels:
+		panel.queue_free()
+	panels.clear()
+	virtual_displays.remove_all()
+	glasses.stop()
+	display_mode = -1
+	_enter_waiting()
+	_sync_settings()
+
+
+func _enter_waiting() -> void:
+	cursor_fence.fence = Rect2i()
+	VitureGlasses.set_native_window_shown(DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE), false)
+	OS.low_processor_usage_mode = true
+	Engine.max_fps = 10
+	tray.tooltip = "VITURE virtual screens (waiting for the glasses)"
+
+
+## The command Windows runs at login: the windowless Godot build (no console)
+## running this scene.
+func _launch_command() -> String:
+	var exe := OS.get_executable_path()
+	var windowless := exe.replace("_console.exe", ".exe")
+	if FileAccess.file_exists(windowless):
+		exe = windowless
+	var project := ProjectSettings.globalize_path("res://").trim_suffix("/")
+	return '"%s" --path "%s" res://virtual_screen.tscn' % [exe.replace("/", "\\"), project.replace("/", "\\")]
+
+
+func _set_start_with_windows(enabled: bool) -> void:
+	if not VitureGlasses.set_run_at_login(APP_ID, _launch_command(), enabled):
+		_notice("Couldn't update Windows' login items.")
 
 
 func _process(_delta: float) -> void:
+	if settings.visible:
+		_ui.status.text = _status_text()
+	if not active:
+		return
 	var origin := head.global_position
 	var forward := -head.global_transform.basis.z
 	if grabbed:
@@ -124,11 +208,11 @@ func _process(_delta: float) -> void:
 		panel.highlighted = panel == grabbed or (settings.visible and panel == selected)
 
 	status.text = _status_text() if edges.visible or settings.visible else ""
-	if settings.visible:
-		_ui.status.text = _status_text()
 
 
 func _status_text() -> String:
+	if not active:
+		return "Waiting for the glasses: plug them in and everything comes back."
 	return "tracking %s  ·  glasses %s  ·  window %s  ·  %d screen(s)%s" % [
 		"ok" if glasses.is_tracking_stable() else "unstable",
 		DISPLAY_MODES.get(display_mode, "mode 0x%x" % display_mode), get_window().size,
@@ -148,6 +232,9 @@ func _target() -> ScreenPanel:
 
 ## Performs a named action; used by hotkeys, keys, the tray menu and the settings window.
 func _do(action: String) -> void:
+	if not active and action not in ["settings", "quit", "start_with_windows"]:
+		_notice("Waiting for the glasses: plug them in first.")
+		return
 	var target := _target()
 	match action:
 		"grab":
@@ -185,13 +272,15 @@ func _do(action: String) -> void:
 			_match_resolution(target)
 		"remove":
 			_remove_panel(selected)
+		"start_with_windows":
+			_set_start_with_windows(not VitureGlasses.is_run_at_login(APP_ID))
 		"quit":
 			get_tree().quit()
 	_sync_settings()
 
 
 func _handle_key(event: InputEvent) -> void:
-	if not (event is InputEventKey and event.pressed):
+	if not active or not (event is InputEventKey and event.pressed):
 		return
 	var once: bool = not event.echo
 	var target := _target()
@@ -460,6 +549,8 @@ func _on_glasses_state(id: int, value: int) -> void:
 ## glasses are on the desktop, arrange it, then refit the window and restart
 ## captures if anything moved (monitor handles change with the layout).
 func _refit_after_display_change(force := false) -> void:
+	if not active:
+		return # Unplugged before this ran.
 	var changed := force
 	if _glasses_screen() < 0:
 		# Windows treats each mode as a new monitor and falls back to mirroring.
@@ -613,32 +704,36 @@ func _build_settings_window() -> void:
 
 	# Screens
 	box.add_child(_heading("Screens"))
+	_ui.screen_box = VBoxContainer.new()
+	_ui.screen_box.add_theme_constant_override("separation", 10)
+	box.add_child(_ui.screen_box)
+	var screen_box: VBoxContainer = _ui.screen_box
 	_ui.screens = OptionButton.new()
 	_ui.screens.item_selected.connect(func(i):
 		selected = panels[i]
 		_sync_settings())
-	_labelled(box, "Editing", _ui.screens)
-	box.add_child(_button_row([["Add virtual monitor", "add_virtual"], ["Add existing monitor", "add"]]))
-	box.add_child(_button_row([["Remove screen", "remove"], ["Grab / drop", "grab"], ["Line up screens", "line_up"]]))
+	_labelled(screen_box, "Editing", _ui.screens)
+	screen_box.add_child(_button_row([["Add virtual monitor", "add_virtual"], ["Add existing monitor", "add"]]))
+	screen_box.add_child(_button_row([["Remove screen", "remove"], ["Grab / drop", "grab"], ["Line up screens", "line_up"]]))
 	_ui.notice = Label.new()
 	_ui.notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_ui.notice.add_theme_color_override("font_color", Color(1.0, 0.75, 0.4))
-	box.add_child(_ui.notice)
+	box.add_child(_ui.notice) # Outside screen_box: also shown while waiting.
 
 	_ui.monitor = OptionButton.new()
 	_ui.monitor.item_selected.connect(func(i): _set_monitor(selected, _device_of(_ui.monitor.get_item_text(i))))
-	_labelled(box, "Shows", _ui.monitor)
+	_labelled(screen_box, "Shows", _ui.monitor)
 	_ui.resolution = OptionButton.new() # Items are filled in by _sync_settings.
 	_ui.resolution.item_selected.connect(func(i): _set_virtual_size(selected, _ui.resolution.get_item_metadata(i)))
-	_ui.resolution_row = _labelled(box, "Resolution", _ui.resolution)
-	_ui.distance = _slider_row(box, "Distance", "%.2f m", 0.5, 6.0, 0.05, func(v): _set_distance(selected, v))
-	_ui.width = _slider_row(box, "Width", "%.2f m", 0.3, 6.0, 0.05, func(v): _set_width(selected, v))
-	_ui.height = _slider_row(box, "Height", "%+.1f°", -60.0, 60.0, 0.5, func(v):
+	_ui.resolution_row = _labelled(screen_box, "Resolution", _ui.resolution)
+	_ui.distance = _slider_row(screen_box, "Distance", "%.2f m", 0.5, 6.0, 0.05, func(v): _set_distance(selected, v))
+	_ui.width = _slider_row(screen_box, "Width", "%.2f m", 0.3, 6.0, 0.05, func(v): _set_width(selected, v))
+	_ui.height = _slider_row(screen_box, "Height", "%+.1f°", -60.0, 60.0, 0.5, func(v):
 		selected.set_pitch(deg_to_rad(v))
 		_save_config())
 	var size_buttons := _button_row([["Pixel-perfect size", "pixel_perfect"], ["Match resolution to size", "match_resolution"]])
 	_ui.match_button = size_buttons.get_child(1)
-	box.add_child(size_buttons)
+	screen_box.add_child(size_buttons)
 
 	# Glasses
 	box.add_child(_heading("Glasses"))
@@ -653,6 +748,12 @@ func _build_settings_window() -> void:
 	_ui.edges.text = "Show display edges"
 	_ui.edges.toggled.connect(func(on): edges.visible = on)
 	box.add_child(_ui.edges)
+	_ui.autostart = CheckButton.new()
+	_ui.autostart.text = "Start with Windows (waits in the tray for the glasses)"
+	_ui.autostart.toggled.connect(func(on):
+		if not _syncing:
+			_set_start_with_windows(on))
+	box.add_child(_ui.autostart)
 
 	var help := Label.new()
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -728,6 +829,13 @@ func _sync_settings() -> void:
 	if settings == null or not settings.visible:
 		return
 	_syncing = true
+	_ui.autostart.button_pressed = VitureGlasses.is_run_at_login(APP_ID)
+	_ui.sharpness.value = sharpness
+	_ui.fov.value = fov
+	_ui.screen_box.visible = active
+	if not active:
+		_syncing = false
+		return
 	_ui.screens.clear()
 	for i in panels.size():
 		_ui.screens.add_item("Screen %d — %s" % [i + 1, panels[i].monitor_device])
@@ -772,6 +880,9 @@ func _build_tray() -> void:
 	tray_menu = PopupMenu.new()
 	for item in [["Grab / drop screen", "grab"], ["Add virtual monitor", "add_virtual"], ["Line up screens", "line_up"], ["Settings", "settings"],
 			["Show display edges", "edges"], ["Quit", "quit"]]:
+		if item[1] == "quit":
+			tray_menu.add_check_item("Start with Windows")
+			tray_menu.set_item_metadata(tray_menu.item_count - 1, "start_with_windows")
 		tray_menu.add_item(item[0])
 		tray_menu.set_item_metadata(tray_menu.item_count - 1, item[1])
 	tray_menu.index_pressed.connect(func(i): _do(tray_menu.get_item_metadata(i)))
@@ -784,6 +895,7 @@ func _build_tray() -> void:
 		if button == MOUSE_BUTTON_LEFT:
 			_do("settings")
 		elif button == MOUSE_BUTTON_RIGHT:
+			tray_menu.set_item_checked(tray_menu.item_count - 2, VitureGlasses.is_run_at_login(APP_ID))
 			tray_menu.popup(Rect2i(position - Vector2i(0, tray_menu.get_contents_minimum_size().y as int), Vector2i.ZERO)))
 	add_child(tray)
 
@@ -810,25 +922,25 @@ func _load_config() -> void:
 		return
 	fov = cfg.get_value("glasses", "fov", fov)
 	sharpness = cfg.get_value("glasses", "sharpness", sharpness)
-	var list: Array = cfg.get_value("screens", "list", [])
-	if list.is_empty() and cfg.has_section("screen"):
-		list = [_migrate_single_screen(cfg)]
-	var recreated := false
-	for data: Dictionary in list:
+	saved_screens = cfg.get_value("screens", "list", [])
+	if saved_screens.is_empty() and cfg.has_section("screen"):
+		saved_screens = [_migrate_single_screen(cfg)]
+
+
+## Rebuilds the screens from `saved_screens`, recreating virtual monitors.
+func _restore_screens() -> void:
+	for data: Dictionary in saved_screens.duplicate(true):
 		var slot: int = data.get("virtual_slot", -1)
 		if slot >= 0:
-			# Virtual monitors don't outlive the app; bring this one back.
+			# Virtual monitors don't outlive a session; bring this one back.
 			var size: Vector2i = data.get("virtual_size", Vector2i(1920, 1080))
 			var device := virtual_displays.add_display(slot, size.x, size.y, 60)
 			if device.is_empty():
 				push_warning("Couldn't recreate virtual monitor %d: %s" % [slot, virtual_displays.get_last_error()])
 				continue
 			data.monitor = device
-			recreated = true
-		# Recreated virtual monitors are captured once Windows has them up (refit).
+		# Virtual monitors are captured once Windows has them up (the refit).
 		_add_panel(data.get("monitor", ""), data, slot < 0)
-	if recreated:
-		_refit_soon()
 
 
 # Saves from before multiple screens: one [screen] section.
@@ -857,5 +969,7 @@ func _save_config() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("glasses", "fov", fov)
 	cfg.set_value("glasses", "sharpness", sharpness)
-	cfg.set_value("screens", "list", panels.map(func(p): return p.to_dict()))
+	if active:
+		saved_screens = panels.map(func(p): return p.to_dict())
+	cfg.set_value("screens", "list", saved_screens)
 	cfg.save(CONFIG)

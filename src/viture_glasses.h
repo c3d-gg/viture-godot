@@ -38,6 +38,8 @@ public:
 
 	bool start();
 	void stop();
+	// Whether supported glasses are plugged in, without starting a session.
+	bool is_glasses_connected();
 	bool is_running() const { return running; }
 	String get_last_error() const { return last_error; }
 
@@ -60,6 +62,12 @@ public:
 	static bool extend_desktop();
 	static String get_glasses_display();
 	static bool claim_single_instance(const String &p_name);
+	// Windows login items (HKCU ...\CurrentVersion\Run).
+	static bool set_run_at_login(const String &p_name, const String &p_command, bool p_enabled);
+	static bool is_run_at_login(const String &p_name);
+	// Hides/shows a native window by handle (DisplayServer.window_get_native_handle).
+	static void set_native_window_shown(int64_t p_handle, bool p_shown);
+	static bool is_native_window_shown(int64_t p_handle);
 
 	void set_library_path(const String &p_path) { library_path = p_path; }
 	String get_library_path() const { return library_path; }
@@ -116,6 +124,7 @@ private:
 	bool imu_fresh = false;
 
 	String resolve_library_path() const;
+	bool load_api();
 	int detect_product_id();
 	bool fail(const String &p_message);
 	bool poll_raw_pose();

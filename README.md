@@ -99,6 +99,11 @@ Global hotkeys (any app has focus, via `GlobalHotkeys` / Win32 `RegisterHotKey`)
 | Ctrl+Alt+Shift+S | Show/hide the settings window |
 | Ctrl+Alt+Shift+PageUp / PageDown | Raise / lower the screen |
 
+Without the glasses the app waits in the tray (window hidden, nearly idle) and activates within ~2 s of
+them being plugged in, restoring every screen and virtual monitor; unplugging saves and goes back to
+waiting. **Start with Windows** (settings or tray menu) adds a login item that runs the windowless Godot
+binary, so it's always waiting. Only one copy can run at a time.
+
 The settings window opens on the primary desktop, so it appears inside the virtual screen and works with the
 mouse. A tray icon gives the same: left-click for settings, right-click for a menu. While the app or its
 settings window has focus: Space pin, W/S raise/lower, Up/Down distance, Left/Right size, [ / ] field of view,

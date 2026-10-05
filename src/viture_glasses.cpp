@@ -85,6 +85,34 @@ int VitureGlasses::detect_product_id() {
 	return 0;
 }
 
+bool VitureGlasses::load_api() {
+	if (api.is_loaded()) {
+		return true;
+	}
+	std::string error;
+	if (!api.load(resolve_library_path().utf8().get_data(), error)) {
+		return fail(String::utf8(error.c_str()));
+	}
+	if (api.set_log_level) {
+		api.set_log_level(LOG_LEVEL_ERROR);
+	}
+	return true;
+}
+
+bool VitureGlasses::is_glasses_connected() {
+	int wanted = running ? connected_product_id : product_id;
+	if (wanted != 0) {
+		// Known product: just look for it on USB (also notices an unplug mid-session).
+		for (int id : viture::find_connected_product_ids()) {
+			if (id == wanted) {
+				return true;
+			}
+		}
+		return false;
+	}
+	return load_api() && detect_product_id() != 0;
+}
+
 bool VitureGlasses::start() {
 	if (running) {
 		return true;
@@ -93,14 +121,8 @@ bool VitureGlasses::start() {
 		return fail("another VitureGlasses node is already running.");
 	}
 
-	if (!api.is_loaded()) {
-		std::string error;
-		if (!api.load(resolve_library_path().utf8().get_data(), error)) {
-			return fail(String::utf8(error.c_str()));
-		}
-		if (api.set_log_level) {
-			api.set_log_level(LOG_LEVEL_ERROR);
-		}
+	if (!load_api()) {
+		return false;
 	}
 
 	int pid = product_id != 0 ? product_id : detect_product_id();
@@ -355,6 +377,23 @@ bool VitureGlasses::extend_desktop() {
 	return true;
 }
 
+bool VitureGlasses::set_run_at_login(const String &p_name, const String &p_command, bool p_enabled) {
+	auto wide = [](const String &s) { return std::wstring(reinterpret_cast<const wchar_t *>(s.utf16().get_data())); };
+	return viture::set_run_at_login(wide(p_name), wide(p_command), p_enabled);
+}
+
+bool VitureGlasses::is_run_at_login(const String &p_name) {
+	return viture::is_run_at_login(std::wstring(reinterpret_cast<const wchar_t *>(p_name.utf16().get_data())));
+}
+
+void VitureGlasses::set_native_window_shown(int64_t p_handle, bool p_shown) {
+	viture::set_window_shown(p_handle, p_shown);
+}
+
+bool VitureGlasses::is_native_window_shown(int64_t p_handle) {
+	return viture::is_window_shown(p_handle);
+}
+
 String VitureGlasses::get_glasses_display() {
 	return String(viture::find_glasses_display().c_str());
 }
@@ -366,6 +405,11 @@ bool VitureGlasses::claim_single_instance(const String &p_name) {
 void VitureGlasses::_bind_methods() {
 	ClassDB::bind_static_method("VitureGlasses", D_METHOD("extend_desktop"), &VitureGlasses::extend_desktop);
 	ClassDB::bind_static_method("VitureGlasses", D_METHOD("claim_single_instance", "name"), &VitureGlasses::claim_single_instance);
+	ClassDB::bind_static_method("VitureGlasses", D_METHOD("set_run_at_login", "name", "command", "enabled"), &VitureGlasses::set_run_at_login);
+	ClassDB::bind_static_method("VitureGlasses", D_METHOD("is_run_at_login", "name"), &VitureGlasses::is_run_at_login);
+	ClassDB::bind_method(D_METHOD("is_glasses_connected"), &VitureGlasses::is_glasses_connected);
+	ClassDB::bind_static_method("VitureGlasses", D_METHOD("set_native_window_shown", "handle", "shown"), &VitureGlasses::set_native_window_shown);
+	ClassDB::bind_static_method("VitureGlasses", D_METHOD("is_native_window_shown", "handle"), &VitureGlasses::is_native_window_shown);
 	ClassDB::bind_static_method("VitureGlasses", D_METHOD("get_glasses_display"), &VitureGlasses::get_glasses_display);
 	ClassDB::bind_method(D_METHOD("start"), &VitureGlasses::start);
 	ClassDB::bind_method(D_METHOD("stop"), &VitureGlasses::stop);

@@ -76,6 +76,14 @@ long extend_desktop();
 // held until the process exits).
 bool claim_single_instance(const std::wstring &p_name);
 
+// Adds/removes a per-user login item (HKCU Software\Microsoft\Windows\CurrentVersion\Run).
+bool set_run_at_login(const std::wstring &p_name, const std::wstring &p_command, bool p_enabled);
+bool is_run_at_login(const std::wstring &p_name);
+
+// Shows or hides a native window (Godot can't truly hide its main window).
+void set_window_shown(int64_t p_hwnd, bool p_shown);
+bool is_window_shown(int64_t p_hwnd);
+
 // GDI device name ("\\.\DISPLAYn") of the desktop display driven by VITURE
 // glasses (monitor PnP ID "CVT...", whatever mode they are in), or "".
 std::wstring find_glasses_display();

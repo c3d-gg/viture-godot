@@ -16,7 +16,9 @@ Ideas for the virtual screen (remaking the useful parts of SpaceWalker) and the 
 - [ ] **Curved screen** — bend wide panels around the viewer so edges are as close as the centre.
 - [ ] **Smooth-follow mode** — the screen drifts back in front of you after you turn away for a
       while; useful when walking around.
-- [ ] **Auto-start** — launch when the glasses are plugged in or at login, living in the tray.
+- [x] **Auto-start** — waits in the tray (hidden, ~idle) and activates when the glasses are plugged
+      in; "Start with Windows" adds a login item. Still runs through the Godot editor binary; an
+      exported build would make it a standalone app.
 - [ ] **Hide the yellow capture border** — needs `GraphicsCaptureSession.IsBorderRequired(false)`,
       which requires a Windows SDK newer than the installed 10.0.19041.
 
