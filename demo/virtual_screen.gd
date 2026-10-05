@@ -28,6 +28,7 @@ const HOTKEYS := [
 	# [action, combo, repeats while held]
 	["grab", "Ctrl+Alt+Shift+Space", false],
 	["settings", "Ctrl+Alt+Shift+S", false],
+	["pin_window", "Ctrl+Alt+Shift+P", false],
 	["raise", "Ctrl+Alt+Shift+PageUp", true],
 	["lower", "Ctrl+Alt+Shift+PageDown", true],
 ]
@@ -264,6 +265,17 @@ func _do(action: String) -> void:
 			_add_panel(_unused_monitor())
 		"add_virtual":
 			_add_virtual_panel()
+		"pin_window":
+			# The window you're working in (the hotkey doesn't change focus).
+			var handle := DesktopCapture.get_foreground_window()
+			if handle == 0:
+				_notice("Click into the window you want to pin first, then press the hotkey.")
+			else:
+				_add_window_panel(DesktopCapture.get_window_info(handle))
+		"add_window":
+			var i: int = _ui.window_list.selected
+			if i >= 0:
+				_add_window_panel(_ui.window_list.get_item_metadata(i))
 		"line_up":
 			_line_up()
 		"pixel_perfect":
@@ -377,6 +389,15 @@ func _remove_panel(panel: ScreenPanel) -> void:
 	_save_config()
 
 
+## Adds a screen showing one app window, beside the selected screen.
+func _add_window_panel(info: Dictionary) -> void:
+	var panel := _add_panel("", {}, false) # Placed beside the selected screen.
+	panel.set_window(info)
+	if not panel.start_capture():
+		_notice("Couldn't capture that window: " + panel.capture.get_last_error())
+	_save_config()
+
+
 ## Adds a screen backed by a new virtual monitor (needs the SudoVDA driver).
 func _add_virtual_panel() -> void:
 	var used := panels.map(func(p): return p.virtual_slot)
@@ -462,8 +483,16 @@ func _set_width(panel: ScreenPanel, value: float) -> void:
 
 
 func _set_monitor(panel: ScreenPanel, monitor_device: String) -> void:
+	panel.source = "monitor"
 	panel.monitor_device = monitor_device
 	panel.start_capture()
+	_save_config()
+
+
+func _set_window(panel: ScreenPanel, info: Dictionary) -> void:
+	panel.set_window(info)
+	if not panel.start_capture():
+		_notice("Couldn't capture that window: " + panel.capture.get_last_error())
 	_save_config()
 
 
@@ -721,6 +750,12 @@ func _build_settings_window() -> void:
 		_sync_settings())
 	_labelled(screen_box, "Editing", _ui.screens)
 	screen_box.add_child(_button_row([["Add virtual monitor", "add_virtual"], ["Add existing monitor", "add"]]))
+	_ui.window_list = OptionButton.new() # Filled by _sync_settings.
+	var window_row := _labelled(screen_box, "Window", _ui.window_list)
+	var add_window := Button.new()
+	add_window.text = "Add window"
+	add_window.pressed.connect(func(): _do("add_window"))
+	window_row.add_child(add_window)
 	screen_box.add_child(_button_row([["Remove screen", "remove"], ["Grab / drop", "grab"], ["Line up screens", "line_up"]]))
 	_ui.notice = Label.new()
 	_ui.notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -728,7 +763,12 @@ func _build_settings_window() -> void:
 	box.add_child(_ui.notice) # Outside screen_box: also shown while waiting.
 
 	_ui.monitor = OptionButton.new()
-	_ui.monitor.item_selected.connect(func(i): _set_monitor(selected, _device_of(_ui.monitor.get_item_text(i))))
+	_ui.monitor.item_selected.connect(func(i):
+		var source = _ui.monitor.get_item_metadata(i)
+		if source is Dictionary:
+			_set_window(selected, source)
+		else:
+			_set_monitor(selected, source))
 	_labelled(screen_box, "Shows", _ui.monitor)
 	_ui.resolution = OptionButton.new() # Items are filled in by _sync_settings.
 	_ui.resolution.item_selected.connect(func(i): _set_virtual_size(selected, _ui.resolution.get_item_metadata(i)))
@@ -845,17 +885,30 @@ func _sync_settings() -> void:
 		return
 	_ui.screens.clear()
 	for i in panels.size():
-		_ui.screens.add_item("Screen %d — %s" % [i + 1, panels[i].monitor_device])
+		_ui.screens.add_item("Screen %d — %s" % [i + 1, panels[i].display_name()])
 		if panels[i] == selected:
 			_ui.screens.select(i)
-	var glasses_device := _glasses_device()
+	var windows := DesktopCapture.get_windows()
+	_ui.window_list.clear()
+	for w: Dictionary in windows:
+		_ui.window_list.add_item("%s — %s" % [w.title.left(60), w.process])
+		_ui.window_list.set_item_metadata(_ui.window_list.item_count - 1, w)
 	_ui.monitor.clear()
-	for m in DesktopCapture.get_monitor_names():
-		if _device_of(m) == glasses_device:
-			continue # Capturing the glasses' own display just shows a hall of mirrors.
-		_ui.monitor.add_item(m)
-		if _device_of(m) == selected.monitor_device:
-			_ui.monitor.select(_ui.monitor.item_count - 1)
+	if selected.source == "window":
+		for w: Dictionary in windows:
+			_ui.monitor.add_item("%s — %s" % [w.title.left(60), w.process])
+			_ui.monitor.set_item_metadata(_ui.monitor.item_count - 1, w)
+			if w.handle == selected.window_handle:
+				_ui.monitor.select(_ui.monitor.item_count - 1)
+	else:
+		var glasses_device := _glasses_device()
+		for m in DesktopCapture.get_monitor_names():
+			if _device_of(m) == glasses_device:
+				continue # Capturing the glasses' own display just shows a hall of mirrors.
+			_ui.monitor.add_item(m)
+			_ui.monitor.set_item_metadata(_ui.monitor.item_count - 1, _device_of(m))
+			if _device_of(m) == selected.monitor_device:
+				_ui.monitor.select(_ui.monitor.item_count - 1)
 	_ui.distance.value = selected.distance
 	_ui.width.value = selected.width
 	# Only virtual monitors can change resolution; real ones show what they show.

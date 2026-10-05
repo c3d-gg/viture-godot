@@ -8,7 +8,7 @@
 
 namespace godot {
 
-// Captures a Windows monitor into a texture with Windows Graphics Capture,
+// Captures a Windows monitor or a single window into a texture with Windows Graphics Capture,
 // which (unlike DXGI Desktop Duplication) works when the monitor is driven by
 // a different GPU than this process, as on hybrid-graphics laptops.
 //
@@ -21,8 +21,16 @@ public:
 	~DesktopCapture();
 
 	static PackedStringArray get_monitor_names();
+	// Top-level app windows that can be captured: [{handle, title, process}].
+	static Array get_windows();
+	// The window the user is working in (0 if none, or if it belongs to us).
+	static int64_t get_foreground_window();
+	static Dictionary get_window_info(int64_t p_handle);
 
 	bool start(int p_monitor);
+	// Captures one window; follows it as it resizes, even when covered by
+	// other windows (not while minimized).
+	bool start_window(int64_t p_handle);
 	void stop();
 	bool is_capturing() const { return impl != nullptr; }
 	String get_last_error() const { return last_error; }
@@ -44,8 +52,11 @@ private:
 	Ref<Image> image;
 	Ref<ImageTexture> texture;
 
+	int64_t window = 0; // Captured window, or 0 when capturing a monitor.
+
 	bool fail(const String &p_message);
 	bool resize(int p_width, int p_height);
+	bool begin(void *p_monitor, int64_t p_window, const String &p_name);
 };
 
 } // namespace godot

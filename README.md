@@ -97,6 +97,7 @@ Global hotkeys (any app has focus, via `GlobalHotkeys` / Win32 `RegisterHotKey`)
 | --- | --- |
 | Ctrl+Alt+Shift+Space | Pin the screen where you are looking |
 | Ctrl+Alt+Shift+S | Show/hide the settings window |
+| Ctrl+Alt+Shift+P | Pin the window you're using as its own screen |
 | Ctrl+Alt+Shift+PageUp / PageDown | Raise / lower the screen |
 
 Without the glasses the app waits in the tray (window hidden, nearly idle) and activates within ~2 s of

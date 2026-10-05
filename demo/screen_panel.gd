@@ -1,7 +1,7 @@
 extends Node3D
 
-## One virtual screen: a live capture of a Windows monitor on a quad, pinned
-## in the room. The panel's node sits at the viewer (`pin_origin`) with
+## One virtual screen: a live capture of a Windows monitor or a single app
+## window on a quad, pinned in the room. The panel's node sits at the viewer (`pin_origin`) with
 ## orientation `pin_basis`, and the quad is `distance` along its -Z, facing
 ## back at the viewer.
 
@@ -12,6 +12,12 @@ const EDGE_GAP := deg_to_rad(1.0) # Between neighbouring screens.
 ## Windows device name of the captured monitor, e.g. "\\.\DISPLAY1". Tracked by
 ## name because indices and handles change when the display layout does.
 var monitor_device := ""
+## "monitor" or "window". A window is remembered by its app and title, since
+## its handle changes every time the app is restarted.
+var source := "monitor"
+var window_handle := 0
+var window_process := ""
+var window_title := ""
 ## SudoVDA slot of the virtual monitor this panel owns, or -1 for a real monitor.
 var virtual_slot := -1
 var virtual_size := Vector2i(1920, 1080)
@@ -31,6 +37,7 @@ var _material := ShaderMaterial.new()
 var _quad := MeshInstance3D.new()
 var _frame := MeshInstance3D.new()
 var _label := Label3D.new()
+var _laid_out_size := Vector2i.ZERO
 
 
 func _init() -> void:
@@ -56,15 +63,38 @@ func _process(_delta: float) -> void:
 	if capture.update():
 		# The texture is replaced when the monitor's resolution changes.
 		_material.set_shader_parameter("screen", capture.get_texture())
-	_label.text = monitor_device if capture.is_capturing() else "%s: not capturing (%s)" % [monitor_device, capture.get_last_error()]
+		if capture.get_size() != _laid_out_size:
+			layout() # Windows resize freely; keep the panel's shape matching.
+	_label.text = display_name() if capture.is_capturing() else "%s: not capturing (%s)" % [display_name(), capture.get_last_error()]
+
+
+func display_name() -> String:
+	if source == "window":
+		return "%s (%s)" % [window_title, window_process]
+	return monitor_device
 
 
 func set_sharpness(value: float) -> void:
 	_material.set_shader_parameter("sharpness", value)
 
 
-## (Re)starts capturing `monitor_device`. Returns false if it isn't attached.
+## (Re)starts capturing the monitor or window. Returns false if it's gone.
 func start_capture() -> bool:
+	if source == "window":
+		if DesktopCapture.get_window_info(window_handle).is_empty():
+			window_handle = _find_window()
+		if window_handle == 0:
+			capture.stop()
+			return false
+		var info := DesktopCapture.get_window_info(window_handle)
+		window_title = info.get("title", window_title)
+		window_process = info.get("process", window_process)
+		if capture.start_window(window_handle):
+			_material.set_shader_parameter("screen", capture.get_texture())
+			layout()
+			return true
+		return false
+
 	var monitors := DesktopCapture.get_monitor_names()
 	for i in monitors.size():
 		if device_name(monitors[i]) == monitor_device:
@@ -77,7 +107,28 @@ func start_capture() -> bool:
 	return false
 
 
+## Points this panel at a window (from DesktopCapture.get_windows()).
+func set_window(info: Dictionary) -> void:
+	source = "window"
+	window_handle = info.get("handle", 0)
+	window_title = info.get("title", "")
+	window_process = info.get("process", "")
+
+
+# Re-finds the remembered window: same app and title, else the same app.
+func _find_window() -> int:
+	var same_app := 0
+	for w: Dictionary in DesktopCapture.get_windows():
+		if w.process == window_process:
+			if w.title == window_title:
+				return w.handle
+			if same_app == 0:
+				same_app = w.handle
+	return same_app
+
+
 func layout() -> void:
+	_laid_out_size = capture.get_size()
 	var size := Vector2(capture.get_size())
 	var aspect := size.x / size.y if size.y > 0 else 16.0 / 9.0
 	var height := width / aspect
@@ -170,6 +221,7 @@ func angle_from(origin: Vector3, direction: Vector3) -> float:
 func to_dict() -> Dictionary:
 	return {
 		"monitor": monitor_device, "distance": distance, "width": width,
+		"source": source, "window_process": window_process, "window_title": window_title,
 		"basis": pin_basis, "origin": pin_origin,
 		"virtual_slot": virtual_slot, "virtual_size": virtual_size,
 	}
@@ -177,6 +229,9 @@ func to_dict() -> Dictionary:
 
 func from_dict(d: Dictionary) -> void:
 	monitor_device = d.get("monitor", monitor_device)
+	source = d.get("source", source)
+	window_process = d.get("window_process", window_process)
+	window_title = d.get("window_title", window_title)
 	distance = d.get("distance", distance)
 	width = d.get("width", width)
 	if d.has("basis"):

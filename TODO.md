@@ -9,8 +9,8 @@ Ideas for the virtual screen (remaking the useful parts of SpaceWalker) and the 
 - [x] **Arrange virtual monitors on the desktop** — ordered left-to-right to match the screens in the
       room; the glasses' display goes at the far end and a cursor fence keeps the mouse off it
       (Windows closes any gap between monitors).
-- [ ] **Single-window capture** — pin one app window (video, chat, doc) instead of a whole desktop.
-      Windows Graphics Capture supports windows via `CreateForWindow`.
+- [x] **Single-window capture** — Ctrl+Alt+Shift+P pins the window you're using; settings can add
+      or swap windows. Remembered by app + title across sessions.
 - [x] **Sharper text** — supersampled/bicubic filtering in the shader, a sharpness slider,
       "Pixel-perfect size", and "Match resolution to size" for virtual monitors.
 - [ ] **Curved screen** — bend wide panels around the viewer so edges are as close as the centre.

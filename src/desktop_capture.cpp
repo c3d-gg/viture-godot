@@ -7,6 +7,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <dwmapi.h>
 #include <unknwn.h> // Must precede the WinRT headers for classic COM interop.
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -94,7 +95,25 @@ bool DesktopCapture::fail(const String &p_message) {
 
 bool DesktopCapture::start(int p_monitor) {
 	stop();
+	std::vector<MonitorInfo> monitors = enumerate_monitors();
+	if (p_monitor < 0 || p_monitor >= static_cast<int>(monitors.size())) {
+		return fail(vformat("monitor %d does not exist (%d attached).", p_monitor, monitors.size()));
+	}
+	return begin(monitors[p_monitor].handle, 0, monitors[p_monitor].name);
+}
 
+bool DesktopCapture::start_window(int64_t p_handle) {
+	stop();
+	HWND hwnd = reinterpret_cast<HWND>(p_handle);
+	if (!IsWindow(hwnd)) {
+		return fail("that window no longer exists.");
+	}
+	Dictionary info = get_window_info(p_handle);
+	return begin(nullptr, p_handle, vformat("window \"%s\"", info.get("title", "")));
+}
+
+bool DesktopCapture::begin(void *p_monitor, int64_t p_window, const String &p_name) {
+	window = p_window;
 	try {
 		winrt::init_apartment(winrt::apartment_type::single_threaded);
 	} catch (const winrt::hresult_error &) {
@@ -103,12 +122,6 @@ bool DesktopCapture::start(int p_monitor) {
 	if (!wgc::GraphicsCaptureSession::IsSupported()) {
 		return fail("Windows Graphics Capture is not supported on this system.");
 	}
-
-	std::vector<MonitorInfo> monitors = enumerate_monitors();
-	if (p_monitor < 0 || p_monitor >= static_cast<int>(monitors.size())) {
-		return fail(vformat("monitor %d does not exist (%d attached).", p_monitor, monitors.size()));
-	}
-	const MonitorInfo &target = monitors[p_monitor];
 
 	auto im = std::make_unique<Impl>();
 	HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -124,7 +137,11 @@ bool DesktopCapture::start(int p_monitor) {
 		im->winrt_device = inspectable.as<wgd::Direct3D11::IDirect3DDevice>();
 
 		auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-		winrt::check_hresult(interop->CreateForMonitor(target.handle, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(im->item)));
+		if (p_window) {
+			winrt::check_hresult(interop->CreateForWindow(reinterpret_cast<HWND>(p_window), winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(im->item)));
+		} else {
+			winrt::check_hresult(interop->CreateForMonitor(static_cast<HMONITOR>(p_monitor), winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(im->item)));
+		}
 
 		im->pool_size = im->item.Size();
 		im->pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(
@@ -133,7 +150,7 @@ bool DesktopCapture::start(int p_monitor) {
 		im->session.IsCursorCaptureEnabled(true);
 		im->session.StartCapture();
 	} catch (const winrt::hresult_error &e) {
-		return fail(vformat("capture setup failed for %s: %s", target.name, describe_error(e)));
+		return fail(vformat("capture setup failed for %s: %s", p_name, describe_error(e)));
 	}
 
 	impl = im.release();
@@ -189,6 +206,10 @@ bool DesktopCapture::update() {
 	if (!impl) {
 		return false;
 	}
+	if (window && !IsWindow(reinterpret_cast<HWND>(window))) {
+		fail("the window was closed.");
+		return false;
+	}
 
 	try {
 		// Drain the pool and keep only the newest frame.
@@ -235,8 +256,82 @@ bool DesktopCapture::update() {
 	return true;
 }
 
+namespace {
+
+String process_name(HWND p_hwnd) {
+	DWORD pid = 0;
+	GetWindowThreadProcessId(p_hwnd, &pid);
+	HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!process) {
+		return String();
+	}
+	wchar_t path[MAX_PATH];
+	DWORD length = MAX_PATH;
+	String name;
+	if (QueryFullProcessImageNameW(process, 0, path, &length)) {
+		name = String(path).get_file();
+	}
+	CloseHandle(process);
+	return name;
+}
+
+// Visible, titled, top-level app windows (what Alt+Tab would show), not ours.
+bool is_capturable_window(HWND p_hwnd) {
+	if (!IsWindowVisible(p_hwnd) || GetWindowTextLengthW(p_hwnd) == 0 || GetAncestor(p_hwnd, GA_ROOT) != p_hwnd) {
+		return false;
+	}
+	LONG_PTR ex_style = GetWindowLongPtrW(p_hwnd, GWL_EXSTYLE);
+	if ((ex_style & WS_EX_TOOLWINDOW) || (GetWindow(p_hwnd, GW_OWNER) && !(ex_style & WS_EX_APPWINDOW))) {
+		return false;
+	}
+	BOOL cloaked = FALSE; // Hidden UWP frames and windows on other virtual desktops.
+	DwmGetWindowAttribute(p_hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+	if (cloaked) {
+		return false;
+	}
+	DWORD pid = 0;
+	GetWindowThreadProcessId(p_hwnd, &pid);
+	return pid != GetCurrentProcessId();
+}
+
+} // namespace
+
+Dictionary DesktopCapture::get_window_info(int64_t p_handle) {
+	Dictionary info;
+	HWND hwnd = reinterpret_cast<HWND>(p_handle);
+	if (!IsWindow(hwnd)) {
+		return info;
+	}
+	wchar_t title[512];
+	GetWindowTextW(hwnd, title, 512);
+	info["handle"] = p_handle;
+	info["title"] = String(title);
+	info["process"] = process_name(hwnd);
+	return info;
+}
+
+Array DesktopCapture::get_windows() {
+	Array windows;
+	EnumWindows([](HWND hwnd, LPARAM param) -> BOOL {
+		if (is_capturable_window(hwnd)) {
+			reinterpret_cast<Array *>(param)->push_back(get_window_info(reinterpret_cast<int64_t>(hwnd)));
+		}
+		return TRUE;
+	}, reinterpret_cast<LPARAM>(&windows));
+	return windows;
+}
+
+int64_t DesktopCapture::get_foreground_window() {
+	HWND hwnd = GetForegroundWindow();
+	return hwnd && is_capturable_window(hwnd) ? reinterpret_cast<int64_t>(hwnd) : 0;
+}
+
 void DesktopCapture::_bind_methods() {
 	ClassDB::bind_static_method("DesktopCapture", D_METHOD("get_monitor_names"), &DesktopCapture::get_monitor_names);
+	ClassDB::bind_static_method("DesktopCapture", D_METHOD("get_windows"), &DesktopCapture::get_windows);
+	ClassDB::bind_static_method("DesktopCapture", D_METHOD("get_foreground_window"), &DesktopCapture::get_foreground_window);
+	ClassDB::bind_static_method("DesktopCapture", D_METHOD("get_window_info", "handle"), &DesktopCapture::get_window_info);
+	ClassDB::bind_method(D_METHOD("start_window", "handle"), &DesktopCapture::start_window);
 	ClassDB::bind_method(D_METHOD("start", "monitor"), &DesktopCapture::start);
 	ClassDB::bind_method(D_METHOD("stop"), &DesktopCapture::stop);
 	ClassDB::bind_method(D_METHOD("is_capturing"), &DesktopCapture::is_capturing);

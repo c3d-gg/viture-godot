@@ -9,7 +9,7 @@ env = SConscript("godot-cpp/SConstruct")
 
 env.Append(CPPPATH=["src/", "thirdparty/viture-sdk-windows/include/"])
 if env["platform"] == "windows":
-    env.Append(LIBS=["setupapi", "d3d11", "dxgi", "windowsapp", "user32", "winmm", "advapi32"])
+    env.Append(LIBS=["setupapi", "d3d11", "dxgi", "windowsapp", "user32", "winmm", "advapi32", "dwmapi"])
 
 sources = Glob("src/*.cpp")
 
