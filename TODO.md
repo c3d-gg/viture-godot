@@ -4,8 +4,8 @@ Ideas for the virtual screen (remaking the useful parts of SpaceWalker) and the 
 
 ## Virtual screen
 
-- [ ] **Multiple virtual screens** — several pinned panels, each showing its own monitor; extra
-      monitors come from a virtual display driver (Parsec / SudoMaker are installed). *In progress.*
+- [x] **Multiple virtual screens** — several pinned panels, each showing its own monitor; extra
+      monitors come from the SudoVDA virtual display driver.
 - [ ] **Arrange virtual monitors on the desktop** — Windows places new ones to the right of the
       glasses' display, so the mouse passes through the glasses to reach them. Position them next to
       the laptop screen (and the glasses out of the way) with `SetDisplayConfig`.
