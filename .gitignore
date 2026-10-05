@@ -1,0 +1,24 @@
+﻿# Godot
+demo/.godot/
+
+# Build output
+.sconsign*.dblite
+*.obj
+*.o
+*.os
+*.exp
+*.lib
+*.pdb
+*.ilk
+demo/bin/*.dll
+
+# Vendor SDK binaries (not redistributable)
+demo/bin/viture/*
+!demo/bin/viture/README.txt
+
+thirdparty/viture-sdk-*/
+
+# Local tools (Godot editor binary)
+tools/
+
+__pycache__/

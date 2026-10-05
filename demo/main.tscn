@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Head" type="Camera3D" parent="."]
+fov = 46.0
+
+[node name="Glasses" type="VitureGlasses" parent="."]
+target = NodePath("../Head")
+
+[node name="HUD" type="Label" parent="."]
+offset_left = 24.0
+offset_top = 24.0
