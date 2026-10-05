@@ -552,6 +552,13 @@ func _refit_after_display_change(force := false) -> void:
 	if not active:
 		return # Unplugged before this ran.
 	var changed := force
+	# Right after plugging in, USB is up before Windows has added the display.
+	for i in 10:
+		if _glasses_screen() >= 0 or not active:
+			break
+		await get_tree().create_timer(1.0).timeout
+	if not active:
+		return
 	if _glasses_screen() < 0:
 		# Windows treats each mode as a new monitor and falls back to mirroring.
 		print("Glasses dropped off the desktop; extending.")
