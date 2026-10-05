@@ -26,6 +26,16 @@ Ideas for the virtual screen (remaking the useful parts of SpaceWalker) and the 
       detected with the glasses' tracking cameras and the SDK's OpenCV, so screens appear in the
       same physical spot every session regardless of startup heading.
 
+## Distribution
+
+- [ ] **Ask VITURE for redistribution rights** — the SDK license (in the Android SDK zip) says
+      distribution is "prohibited unless explicitly permitted by a written agreement with VITURE
+      Inc.", so releases can't bundle `glasses.dll` / `carina_vio.dll`. Email their developer program
+      asking to ship the runtime DLLs with this open-source app.
+- [ ] **SDK-free build** — declare the SDK functions ourselves again (as in the first version) so the
+      extension compiles without VITURE's headers, e.g. in GitHub Actions. Running it still needs
+      the SDK DLLs until VITURE agrees to redistribution.
+
 ## Stereo
 
 - [ ] **Stereo alignment** — side-by-side 3D works but looked "a little off"; revisit with the
