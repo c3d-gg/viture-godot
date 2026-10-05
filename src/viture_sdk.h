@@ -72,6 +72,10 @@ std::vector<int> find_connected_product_ids();
 // Applies the Windows "Extend" display topology; returns a Win32 error code.
 long extend_desktop();
 
+// True if this is the only process holding p_name (a per-user named mutex,
+// held until the process exits).
+bool claim_single_instance(const std::wstring &p_name);
+
 // GDI device name ("\\.\DISPLAYn") of the desktop display driven by VITURE
 // glasses (monitor PnP ID "CVT...", whatever mode they are in), or "".
 std::wstring find_glasses_display();

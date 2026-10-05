@@ -38,6 +38,7 @@ const LOOK_AT_ANGLE := deg_to_rad(30.0) # How close to a screen's centre counts 
 const ScreenPanel := preload("res://screen_panel.gd")
 
 @export var fov := 52.0 ## Diagonal field of view of the glasses, degrees.
+@export_range(0.0, 1.0) var sharpness := 0.3 ## Extra text crispness on every screen.
 @export var preferred_display_mode := 0x44 ## 1200p 120Hz: full panel, smoothest head tracking.
 
 @onready var glasses: VitureGlasses = $Glasses
@@ -65,6 +66,15 @@ var _ui := {}
 
 
 func _ready() -> void:
+	# A second copy would fight the first over the glasses, hotkeys and
+	# virtual monitors, so only one may run.
+	if not VitureGlasses.claim_single_instance("VitureVirtualScreens"):
+		OS.alert("VITURE virtual screens is already running.
+Look for its icon in the system tray.", "Already running")
+		get_tree().quit()
+		return
+	glasses.start() # Not auto-started, so a second copy never touches the glasses.
+
 	# Black is see-through on the glasses' OLED optics.
 	RenderingServer.set_default_clear_color(Color.BLACK)
 	add_child(edges)
@@ -169,6 +179,10 @@ func _do(action: String) -> void:
 			_add_virtual_panel()
 		"line_up":
 			_line_up()
+		"pixel_perfect":
+			_set_width(target, target.distance * target.capture.get_size().x * _pixel_tan())
+		"match_resolution":
+			_match_resolution(target)
 		"remove":
 			_remove_panel(selected)
 		"quit":
@@ -217,6 +231,7 @@ func _add_panel(monitor_device: String, data := {}, start_now := true) -> Screen
 	if start_now and not panel.start_capture():
 		push_warning("Monitor %s is not attached; its screen stays blank until it is." % monitor_device)
 	panel.layout()
+	panel.set_sharpness(sharpness)
 	selected = panel
 	_save_config()
 	return panel
@@ -293,6 +308,32 @@ func _add_virtual_panel() -> void:
 
 
 ## Changes a virtual monitor's resolution by recreating it.
+## Size of one glasses pixel at the centre of view, as a tangent (metres
+## across per metre away).
+func _pixel_tan() -> float:
+	return 2.0 * tan(deg_to_rad(head.fov) * 0.5) / float(maxi(1, get_window().size.y))
+
+
+## Sets a virtual monitor's resolution to the number of glasses pixels its
+## screen covers, so Windows draws text natively at that size with no resampling.
+func _match_resolution(panel: ScreenPanel) -> void:
+	if panel.virtual_slot < 0:
+		_notice("Match resolution only works on virtual monitors; use Pixel-perfect size for real ones.")
+		return
+	var aspect := float(panel.virtual_size.y) / float(panel.virtual_size.x)
+	var w := clampi(snappedi(int(panel.width / (panel.distance * _pixel_tan())), 8), 640, 3840)
+	var h := snappedi(int(w * aspect), 2)
+	print("Matching virtual monitor %d to %dx%d" % [panel.virtual_slot, w, h])
+	_set_virtual_size(panel, Vector2i(w, h))
+
+
+func _set_sharpness(value: float) -> void:
+	sharpness = clampf(value, 0.0, 1.0)
+	for panel in panels:
+		panel.set_sharpness(sharpness)
+	_save_config()
+
+
 func _set_virtual_size(panel: ScreenPanel, size: Vector2i) -> void:
 	if panel.virtual_slot < 0 or size == panel.virtual_size:
 		return
@@ -587,20 +628,22 @@ func _build_settings_window() -> void:
 	_ui.monitor = OptionButton.new()
 	_ui.monitor.item_selected.connect(func(i): _set_monitor(selected, _device_of(_ui.monitor.get_item_text(i))))
 	_labelled(box, "Shows", _ui.monitor)
-	_ui.resolution = OptionButton.new()
-	for size in VIRTUAL_SIZES:
-		_ui.resolution.add_item("%d × %d" % [size.x, size.y])
-	_ui.resolution.item_selected.connect(func(i): _set_virtual_size(selected, VIRTUAL_SIZES[i]))
+	_ui.resolution = OptionButton.new() # Items are filled in by _sync_settings.
+	_ui.resolution.item_selected.connect(func(i): _set_virtual_size(selected, _ui.resolution.get_item_metadata(i)))
 	_ui.resolution_row = _labelled(box, "Resolution", _ui.resolution)
 	_ui.distance = _slider_row(box, "Distance", "%.2f m", 0.5, 6.0, 0.05, func(v): _set_distance(selected, v))
 	_ui.width = _slider_row(box, "Width", "%.2f m", 0.3, 6.0, 0.05, func(v): _set_width(selected, v))
 	_ui.height = _slider_row(box, "Height", "%+.1f°", -60.0, 60.0, 0.5, func(v):
 		selected.set_pitch(deg_to_rad(v))
 		_save_config())
+	var size_buttons := _button_row([["Pixel-perfect size", "pixel_perfect"], ["Match resolution to size", "match_resolution"]])
+	_ui.match_button = size_buttons.get_child(1)
+	box.add_child(size_buttons)
 
 	# Glasses
 	box.add_child(_heading("Glasses"))
 	_ui.fov = _slider_row(box, "Field of view", "%.1f°", 40.0, 65.0, 0.1, _set_fov)
+	_ui.sharpness = _slider_row(box, "Text sharpness", "%.2f", 0.0, 1.0, 0.05, _set_sharpness)
 	_ui.mode = OptionButton.new()
 	for mode in DISPLAY_MODES:
 		_ui.mode.add_item(DISPLAY_MODES[mode], mode)
@@ -703,7 +746,17 @@ func _sync_settings() -> void:
 	# Only virtual monitors can change resolution; real ones show what they show.
 	_ui.resolution_row.visible = selected.virtual_slot >= 0
 	_ui.monitor.get_parent().visible = selected.virtual_slot < 0
-	_ui.resolution.select(VIRTUAL_SIZES.find(selected.virtual_size))
+	_ui.resolution.clear()
+	var sizes := VIRTUAL_SIZES.duplicate()
+	if selected.virtual_size not in sizes:
+		sizes.append(selected.virtual_size) # e.g. from Match resolution.
+	for size in sizes:
+		_ui.resolution.add_item("%d × %d" % [size.x, size.y])
+		_ui.resolution.set_item_metadata(_ui.resolution.item_count - 1, size)
+		if size == selected.virtual_size:
+			_ui.resolution.select(_ui.resolution.item_count - 1)
+	_ui.match_button.disabled = selected.virtual_slot < 0
+	_ui.sharpness.value = sharpness
 	_ui.height.value = rad_to_deg(selected.get_pitch())
 	_ui.fov.value = fov
 	_ui.edges.button_pressed = edges.visible
@@ -756,6 +809,7 @@ func _load_config() -> void:
 	if cfg.load(CONFIG) != OK:
 		return
 	fov = cfg.get_value("glasses", "fov", fov)
+	sharpness = cfg.get_value("glasses", "sharpness", sharpness)
 	var list: Array = cfg.get_value("screens", "list", [])
 	if list.is_empty() and cfg.has_section("screen"):
 		list = [_migrate_single_screen(cfg)]
@@ -802,5 +856,6 @@ func _save_config() -> void:
 		return
 	var cfg := ConfigFile.new()
 	cfg.set_value("glasses", "fov", fov)
+	cfg.set_value("glasses", "sharpness", sharpness)
 	cfg.set_value("screens", "list", panels.map(func(p): return p.to_dict()))
 	cfg.save(CONFIG)

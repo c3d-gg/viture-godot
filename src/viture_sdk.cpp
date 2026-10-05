@@ -116,6 +116,12 @@ long extend_desktop() {
 	return SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
 }
 
+bool claim_single_instance(const std::wstring &p_name) {
+	// Intentionally never closed: the OS releases it when the process exits.
+	HANDLE mutex = CreateMutexW(nullptr, FALSE, (L"Local\\" + p_name).c_str());
+	return mutex && GetLastError() != ERROR_ALREADY_EXISTS;
+}
+
 std::wstring find_glasses_display() {
 	DISPLAY_DEVICEW adapter = {};
 	adapter.cb = sizeof(adapter);

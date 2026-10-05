@@ -19,3 +19,4 @@ outline_size = 6
 
 [node name="Glasses" type="VitureGlasses" parent="."]
 target = NodePath("../XROrigin3D/Head")
+auto_start = false

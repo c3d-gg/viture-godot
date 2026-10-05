@@ -11,8 +11,8 @@ Ideas for the virtual screen (remaking the useful parts of SpaceWalker) and the 
       (Windows closes any gap between monitors).
 - [ ] **Single-window capture** — pin one app window (video, chat, doc) instead of a whole desktop.
       Windows Graphics Capture supports windows via `CreateForWindow`.
-- [ ] **Sharper text** — better filtering/mipmaps or supersampling so small text stays readable at
-      a distance.
+- [x] **Sharper text** — supersampled/bicubic filtering in the shader, a sharpness slider,
+      "Pixel-perfect size", and "Match resolution to size" for virtual monitors.
 - [ ] **Curved screen** — bend wide panels around the viewer so edges are as close as the centre.
 - [ ] **Smooth-follow mode** — the screen drifts back in front of you after you turn away for a
       while; useful when walking around.

@@ -59,6 +59,7 @@ public:
 	int set_brightness(int p_level);
 	static bool extend_desktop();
 	static String get_glasses_display();
+	static bool claim_single_instance(const String &p_name);
 
 	void set_library_path(const String &p_path) { library_path = p_path; }
 	String get_library_path() const { return library_path; }

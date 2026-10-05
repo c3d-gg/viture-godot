@@ -59,6 +59,10 @@ func _process(_delta: float) -> void:
 	_label.text = monitor_device if capture.is_capturing() else "%s: not capturing (%s)" % [monitor_device, capture.get_last_error()]
 
 
+func set_sharpness(value: float) -> void:
+	_material.set_shader_parameter("sharpness", value)
+
+
 ## (Re)starts capturing `monitor_device`. Returns false if it isn't attached.
 func start_capture() -> bool:
 	var monitors := DesktopCapture.get_monitor_names()
