@@ -6,7 +6,8 @@ extends Node3D
 ## Keys (while this window has focus): Space = pin screen where you are looking,
 ## W/S = raise/lower, Up/Down = closer/further, Left/Right = smaller/larger, M = next monitor,
 ## H = next glasses display mode, B = show display edges, [ / ] = field of view,
-## Tab = move window to next screen. Settings are saved to user://virtual_screen.cfg.
+## Tab = move window to next screen. Settings, including where the screen is
+## pinned, are saved to user://virtual_screen.cfg.
 
 const CONFIG := "user://virtual_screen.cfg"
 # VITURE_DISPLAY_MODE_*: 1920x1080 @ 60/120 Hz, 1920x1200 @ 60/120 Hz.
@@ -77,8 +78,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_W:
 			# Swing along an arc around the viewer so the screen keeps facing them.
 			anchor.rotate_object_local(Vector3.RIGHT, deg_to_rad(1.5))
+			_save_config()
 		KEY_S:
 			anchor.rotate_object_local(Vector3.RIGHT, deg_to_rad(-1.5))
+			_save_config()
 		KEY_UP:
 			distance = maxf(0.5, distance - 0.1)
 			_layout()
@@ -125,6 +128,7 @@ func pin_in_front() -> void:
 	if absf(forward.normalized().y) > 0.95:
 		return # Looking straight up or down: no sensible "level".
 	anchor.global_transform = Transform3D(Basis.looking_at(forward, Vector3.UP), head.global_position)
+	_save_config()
 
 
 func _layout() -> void:
@@ -202,6 +206,9 @@ func _load_config() -> void:
 		distance = cfg.get_value("screen", "distance", distance)
 		width = cfg.get_value("screen", "width", width)
 		fov = cfg.get_value("glasses", "fov", fov)
+		# Relative to the tracking origin, which is recentered on the direction
+		# you face at startup.
+		anchor.transform = cfg.get_value("screen", "anchor", Transform3D.IDENTITY)
 
 
 func _save_config() -> void:
@@ -210,6 +217,7 @@ func _save_config() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("screen", "distance", distance)
 	cfg.set_value("screen", "width", width)
+	cfg.set_value("screen", "anchor", anchor.transform)
 	cfg.set_value("glasses", "fov", fov)
 	cfg.save(CONFIG)
 
