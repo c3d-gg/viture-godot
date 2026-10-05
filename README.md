@@ -109,3 +109,9 @@ Duplication doesn't work on hybrid-GPU laptops when the captured monitor is on t
 
 Each glasses display mode appears to Windows as a separate monitor that may not be on the desktop yet;
 `VitureGlasses.extend_desktop()` applies Extend (same as Win+P) and the demo calls it after a mode switch.
+
+## License
+
+MIT; see [LICENSE](LICENSE). The VITURE Glasses SDK is not included and has its own terms. The SudoVDA
+control definitions in `src/virtual_displays.cpp` come from
+[SudoMaker/SudoVDA](https://github.com/SudoMaker/SudoVDA) (MIT / CC0).
