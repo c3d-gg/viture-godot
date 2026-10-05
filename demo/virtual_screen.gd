@@ -37,8 +37,10 @@ const VIRTUAL_SIZES: Array[Vector2i] = [
 ]
 const PITCH_STEP := deg_to_rad(1.5)
 # A grabbed screen snaps edge to edge with a neighbour when you look within
-# this angle of the snapped position.
-const SNAP_ANGLE := deg_to_rad(8.0)
+# SNAP_IN of the snapped position, and lets go past SNAP_OUT. The gap between
+# them stops it flickering in and out when you hover near the edge.
+const SNAP_IN := deg_to_rad(6.0)
+const SNAP_OUT := deg_to_rad(10.0)
 const LOOK_AT_ANGLE := deg_to_rad(30.0) # How close to a screen's centre counts as looking at it.
 const ScreenPanel := preload("res://screen_panel.gd")
 const APP_ID := "VitureVirtualScreens" # Single-instance lock and login item name.
@@ -56,6 +58,7 @@ var panels: Array[ScreenPanel] = []
 var selected: ScreenPanel # Edited by the settings window.
 var grabbed: ScreenPanel # Following your gaze until dropped.
 var looked_at: ScreenPanel
+var _snapped := false # The grabbed screen is currently held in a snap slot.
 
 var edges := _make_edge_overlay()
 var display_mode := -1 # Cached: reading it is a USB round trip to the glasses.
@@ -90,6 +93,9 @@ func _ready() -> void:
 	add_child(cursor_fence)
 	get_window().size_changed.connect(_update_camera_fov)
 	glasses.state_changed.connect(_on_glasses_state)
+	# Update the head before we aim a grabbed screen at it (children normally
+	# process after their parent, which put the screen a frame behind).
+	glasses.process_priority = -1
 	_load_config()
 
 	add_child(hotkeys)
@@ -247,6 +253,7 @@ func _do(action: String) -> void:
 			else:
 				grabbed = target
 				selected = target
+				_snapped = false
 		"raise":
 			target.nudge_pitch(PITCH_STEP)
 			_save_config()
@@ -294,6 +301,8 @@ func _do(action: String) -> void:
 func _handle_key(event: InputEvent) -> void:
 	if not active or not (event is InputEventKey and event.pressed):
 		return
+	if event.ctrl_pressed or event.alt_pressed or event.shift_pressed or event.meta_pressed:
+		return # Ctrl+Alt+Shift combos are the global hotkeys; don't act on them twice.
 	var once: bool = not event.echo
 	var target := _target()
 	match event.keycode:
@@ -356,7 +365,7 @@ func _line_up() -> void:
 ## While a screen is grabbed: if it's close to the left or right edge slot of
 ## another screen, snap it there (same tilt, flush edges).
 func _snap(panel: ScreenPanel) -> void:
-	var best := SNAP_ANGLE
+	var best := SNAP_OUT if _snapped else SNAP_IN
 	var best_basis: Basis
 	var best_origin: Vector3
 	for other in panels:
@@ -369,7 +378,8 @@ func _snap(panel: ScreenPanel) -> void:
 				best = angle
 				best_basis = slot
 				best_origin = other.pin_origin
-	if best < SNAP_ANGLE:
+	_snapped = best < (SNAP_OUT if _snapped else SNAP_IN)
+	if _snapped:
 		panel.pin_basis = best_basis
 		panel.pin_origin = best_origin
 		panel.apply_pin()
@@ -714,7 +724,8 @@ func _make_edge_overlay() -> CanvasLayer:
 func _build_settings_window() -> void:
 	settings = Window.new()
 	settings.title = "VITURE virtual screens"
-	settings.size = Vector2i(480, 700)
+	settings.size = Vector2i(480, 700) # Refitted to the content each time it opens.
+	settings.min_size = Vector2i(420, 320)
 	settings.always_on_top = true
 	settings.visible = false
 	settings.close_requested.connect(func(): settings.hide())
@@ -725,10 +736,16 @@ func _build_settings_window() -> void:
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	settings.add_child(panel)
+	# Scrolls vertically when the window is shorter than its contents.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
 	var margin := MarginContainer.new()
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 14)
-	panel.add_child(margin)
+	scroll.add_child(margin)
+	_ui.content = margin
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	margin.add_child(box)
@@ -796,7 +813,8 @@ func _build_settings_window() -> void:
 	_ui.edges.toggled.connect(func(on): edges.visible = on)
 	box.add_child(_ui.edges)
 	_ui.autostart = CheckButton.new()
-	_ui.autostart.text = "Start with Windows (waits in the tray for the glasses)"
+	_ui.autostart.text = "Start with Windows"
+	_ui.autostart.tooltip_text = "Waits in the tray and wakes up when the glasses are plugged in."
 	_ui.autostart.toggled.connect(func(on):
 		if not _syncing:
 			_set_start_with_windows(on))
@@ -824,6 +842,10 @@ func _button_row(buttons: Array) -> HBoxContainer:
 	for b in buttons:
 		var button := Button.new()
 		button.text = b[0]
+		button.tooltip_text = b[0]
+		# Shrink with "..." rather than forcing the window wider.
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		button.custom_minimum_size.x = 60
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.pressed.connect(func(): _do(b[1]))
 		row.add_child(button)
@@ -854,6 +876,11 @@ func _labelled(parent: Control, label: String, control: Control) -> HBoxContaine
 	name_label.custom_minimum_size.x = 110
 	row.add_child(name_label)
 	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if control is OptionButton:
+		# Window titles can be very long: don't size to the longest entry, trim instead.
+		control.fit_to_longest_item = false
+		control.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		control.custom_minimum_size.x = 80
 	row.add_child(control)
 	parent.add_child(row)
 	return row
@@ -863,12 +890,24 @@ func _toggle_settings() -> void:
 	if settings.visible:
 		settings.hide()
 		return
-	# Open on the primary (captured) desktop so it appears in a virtual screen.
-	var area := DisplayServer.screen_get_usable_rect(DisplayServer.get_primary_screen())
-	settings.position = area.position + (area.size - settings.size) / 2
 	settings.show()
 	_sync_settings()
+	_fit_settings_window()
 	settings.grab_focus()
+
+
+## Sizes the settings window to its contents (they change with the number of
+## screens and whether the glasses are connected), up to 90% of the screen
+## height; beyond that it scrolls. Centred on the primary (captured) desktop
+## so it appears in a virtual screen.
+func _fit_settings_window() -> void:
+	await get_tree().process_frame # Let wrapped labels settle at the window's width.
+	var area := DisplayServer.screen_get_usable_rect(DisplayServer.get_primary_screen())
+	var wanted: Vector2 = _ui.content.get_combined_minimum_size()
+	var height := clampi(int(wanted.y) + 2, settings.min_size.y, int(area.size.y * 0.9))
+	# Width stays as it is (the user may have widened it); long texts clip or wrap.
+	settings.size = Vector2i(settings.size.x, height)
+	settings.position = area.position + (area.size - settings.size) / 2
 
 
 ## Pushes current values into the settings controls without re-triggering them.
