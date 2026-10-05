@@ -355,8 +355,13 @@ bool VitureGlasses::extend_desktop() {
 	return true;
 }
 
+String VitureGlasses::get_glasses_display() {
+	return String(viture::find_glasses_display().c_str());
+}
+
 void VitureGlasses::_bind_methods() {
 	ClassDB::bind_static_method("VitureGlasses", D_METHOD("extend_desktop"), &VitureGlasses::extend_desktop);
+	ClassDB::bind_static_method("VitureGlasses", D_METHOD("get_glasses_display"), &VitureGlasses::get_glasses_display);
 	ClassDB::bind_method(D_METHOD("start"), &VitureGlasses::start);
 	ClassDB::bind_method(D_METHOD("stop"), &VitureGlasses::stop);
 	ClassDB::bind_method(D_METHOD("is_running"), &VitureGlasses::is_running);

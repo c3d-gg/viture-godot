@@ -116,4 +116,23 @@ long extend_desktop() {
 	return SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
 }
 
+std::wstring find_glasses_display() {
+	DISPLAY_DEVICEW adapter = {};
+	adapter.cb = sizeof(adapter);
+	for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &adapter, 0); i++) {
+		if (adapter.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) {
+			DISPLAY_DEVICEW monitor = {};
+			monitor.cb = sizeof(monitor);
+			for (DWORD j = 0; EnumDisplayDevicesW(adapter.DeviceName, j, &monitor, 0); j++) {
+				// DeviceID looks like "MONITOR\CVT3133\{...}"; CVT is VITURE's EDID vendor code.
+				if (wcsstr(monitor.DeviceID, L"\\CVT")) {
+					return adapter.DeviceName;
+				}
+			}
+		}
+		adapter.cb = sizeof(adapter);
+	}
+	return L"";
+}
+
 } // namespace viture
