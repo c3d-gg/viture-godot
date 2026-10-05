@@ -1,3 +1,4 @@
+#include "cursor_fence.h"
 #include "desktop_capture.h"
 #include "global_hotkeys.h"
 #include "virtual_displays.h"
@@ -14,6 +15,7 @@ static void initialize_viture_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	GDREGISTER_CLASS(CursorFence);
 	GDREGISTER_CLASS(DesktopCapture);
 	GDREGISTER_CLASS(GlobalHotkeys);
 	GDREGISTER_CLASS(VirtualDisplays);

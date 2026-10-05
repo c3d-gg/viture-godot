@@ -31,6 +31,9 @@ const VIRTUAL_SIZES: Array[Vector2i] = [
 	Vector2i(1920, 1080), Vector2i(1920, 1200), Vector2i(2560, 1440), Vector2i(2560, 1080), Vector2i(3840, 2160),
 ]
 const PITCH_STEP := deg_to_rad(1.5)
+# A grabbed screen snaps edge to edge with a neighbour when you look within
+# this angle of the snapped position.
+const SNAP_ANGLE := deg_to_rad(8.0)
 const LOOK_AT_ANGLE := deg_to_rad(30.0) # How close to a screen's centre counts as looking at it.
 const ScreenPanel := preload("res://screen_panel.gd")
 
@@ -51,6 +54,7 @@ var display_mode := -1 # Cached: reading it is a USB round trip to the glasses.
 var hotkeys := GlobalHotkeys.new()
 # Virtual monitors exist only while the app runs; they're removed on exit.
 var virtual_displays := VirtualDisplays.new()
+var cursor_fence := CursorFence.new()
 var failed_hotkeys: PackedStringArray = []
 
 var settings: Window
@@ -65,6 +69,7 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color.BLACK)
 	add_child(edges)
 	add_child(virtual_displays)
+	add_child(cursor_fence)
 	get_window().size_changed.connect(_update_camera_fov)
 	glasses.state_changed.connect(_on_glasses_state)
 	print("Monitors: ", DesktopCapture.get_monitor_names())
@@ -88,6 +93,7 @@ func _ready() -> void:
 
 	_build_settings_window()
 	_build_tray()
+	_refit_soon(false) # Arrange the desktop around the saved screens.
 
 
 func _process(_delta: float) -> void:
@@ -95,6 +101,7 @@ func _process(_delta: float) -> void:
 	var forward := -head.global_transform.basis.z
 	if grabbed:
 		grabbed.aim(forward, origin)
+		_snap(grabbed)
 
 	looked_at = null
 	var best := LOOK_AT_ANGLE
@@ -137,16 +144,16 @@ func _do(action: String) -> void:
 			if grabbed:
 				grabbed = null
 				_save_config()
+				# The desktop order follows where screens sit in the room.
+				_refit_soon(false)
 			else:
 				grabbed = target
 				selected = target
 		"raise":
-			target.pin_pitch += PITCH_STEP
-			target.apply_pin()
+			target.nudge_pitch(PITCH_STEP)
 			_save_config()
 		"lower":
-			target.pin_pitch -= PITCH_STEP
-			target.apply_pin()
+			target.nudge_pitch(-PITCH_STEP)
 			_save_config()
 		"settings":
 			_toggle_settings()
@@ -160,6 +167,8 @@ func _do(action: String) -> void:
 			_add_panel(_unused_monitor())
 		"add_virtual":
 			_add_virtual_panel()
+		"line_up":
+			_line_up()
 		"remove":
 			_remove_panel(selected)
 		"quit":
@@ -192,27 +201,62 @@ func _handle_key(event: InputEvent) -> void:
 
 # --- Panels --------------------------------------------------------------------------
 
-func _add_panel(monitor_device: String, data := {}) -> ScreenPanel:
+func _add_panel(monitor_device: String, data := {}, start_now := true) -> ScreenPanel:
 	var panel := ScreenPanel.new()
 	panel.monitor_device = monitor_device
 	if data.is_empty() and not panels.is_empty():
-		# Place it to the right of the selected screen, same distance and height.
+		# Edge to edge on the right of the selected screen, same size and tilt.
 		var beside := selected if selected else panels[-1]
 		panel.distance = beside.distance
 		panel.width = beside.width
-		panel.pin_pitch = beside.pin_pitch
-		panel.pin_origin = beside.pin_origin
-		panel.pin_yaw = beside.pin_yaw - 2.0 * atan((beside.width * 0.5 + 0.05) / beside.distance)
+		panel.place_beside(beside, 1)
 	else:
 		panel.from_dict(data)
 	add_child(panel)
 	panels.append(panel)
-	if not panel.start_capture():
+	if start_now and not panel.start_capture():
 		push_warning("Monitor %s is not attached; its screen stays blank until it is." % monitor_device)
 	panel.layout()
 	selected = panel
 	_save_config()
 	return panel
+
+
+## Re-spaces every screen into a tidy row, edge to edge, keeping their
+## left-to-right order. The selected screen stays put; the others take its
+## tilt and line up on either side of it, flush along their full height.
+func _line_up() -> void:
+	var ordered := panels.duplicate()
+	ordered.sort_custom(func(a, b): return a.get_yaw() > b.get_yaw()) # Left to right.
+	var centre := ordered.find(selected)
+	for i in range(centre + 1, ordered.size()):
+		ordered[i].place_beside(ordered[i - 1], 1)
+	for i in range(centre - 1, -1, -1):
+		ordered[i].place_beside(ordered[i + 1], -1)
+	_save_config()
+	_refit_soon(false) # In case the order changed.
+
+
+## While a screen is grabbed: if it's close to the left or right edge slot of
+## another screen, snap it there (same tilt, flush edges).
+func _snap(panel: ScreenPanel) -> void:
+	var best := SNAP_ANGLE
+	var best_basis: Basis
+	var best_origin: Vector3
+	for other in panels:
+		if other == panel:
+			continue
+		for side in [-1, 1]:
+			var slot := panel.slot_beside(other, side)
+			var angle := panel.forward().angle_to(-slot.z)
+			if angle < best:
+				best = angle
+				best_basis = slot
+				best_origin = other.pin_origin
+	if best < SNAP_ANGLE:
+		panel.pin_basis = best_basis
+		panel.pin_origin = best_origin
+		panel.apply_pin()
 
 
 func _remove_panel(panel: ScreenPanel) -> void:
@@ -241,7 +285,7 @@ func _add_virtual_panel() -> void:
 		_notice("Couldn't add a virtual monitor: " + virtual_displays.get_last_error())
 		return
 	print("Virtual monitor %d is %s" % [slot, device])
-	var panel := _add_panel(device)
+	var panel := _add_panel(device, {}, false) # Captured once Windows has it up.
 	panel.virtual_slot = slot
 	panel.virtual_size = size
 	_save_config()
@@ -265,8 +309,8 @@ func _set_virtual_size(panel: ScreenPanel, size: Vector2i) -> void:
 
 # Adding or removing a monitor rearranges the desktop: give Windows a moment,
 # then refit the window and restart every capture.
-func _refit_soon() -> void:
-	get_tree().create_timer(1.0).timeout.connect(_refit_after_display_change)
+func _refit_soon(force := true) -> void:
+	get_tree().create_timer(1.0).timeout.connect(_refit_after_display_change.bind(force))
 
 
 func _notice(message: String) -> void:
@@ -346,6 +390,8 @@ func _set_fov(value: float) -> void:
 ## Matches the camera to the optics for the current window shape, so pinned
 ## content keeps its real size and doesn't slide as you turn your head.
 func _update_camera_fov() -> void:
+	if not is_inside_tree():
+		return # The window can still report a resize while the app shuts down.
 	var size := Vector2(get_window().size)
 	var aspect := size.x / size.y if size.y > 0 else 16.0 / 9.0
 	var tan_half_diagonal := tan(deg_to_rad(fov) * 0.5)
@@ -366,19 +412,95 @@ func _on_glasses_state(id: int, value: int) -> void:
 		print("Glasses display mode now %s" % DISPLAY_MODES.get(value, "0x%x" % value))
 		_sync_settings()
 		# Windows re-enumerates the glasses after a mode switch; refit once it settles.
-		get_tree().create_timer(1.5).timeout.connect(_refit_after_display_change)
+		get_tree().create_timer(1.5).timeout.connect(_refit_after_display_change.bind(true))
 
 
-func _refit_after_display_change() -> void:
+## After monitors are added, removed, moved or change mode: make sure the
+## glasses are on the desktop, arrange it, then refit the window and restart
+## captures if anything moved (monitor handles change with the layout).
+func _refit_after_display_change(force := false) -> void:
+	var changed := force
 	if _glasses_screen() < 0:
 		# Windows treats each mode as a new monitor and falls back to mirroring.
 		print("Glasses dropped off the desktop; extending.")
 		VitureGlasses.extend_desktop()
 		await get_tree().create_timer(2.0).timeout
-	_go_fullscreen_on_glasses()
-	# Monitor handles change with the layout; re-resolve every capture.
+		changed = true
+	if _arrange_desktop():
+		await get_tree().create_timer(1.0).timeout
+		changed = true
+	if changed:
+		_go_fullscreen_on_glasses()
+		for panel in panels:
+			panel.start_capture()
+	_update_cursor_fence()
+
+
+## Keeps the mouse off the glasses' display: it only shows the virtual screens.
+func _update_cursor_fence() -> void:
+	var device := _glasses_device()
+	for m in DesktopCapture.get_monitor_names():
+		if _device_of(m) == device:
+			var size := m.get_slice(" ", 1).split("x")
+			var at := m.get_slice("at (", 1).trim_suffix(")").split(", ")
+			cursor_fence.fence = Rect2i(at[0].to_int(), at[1].to_int(), size[0].to_int(), size[1].to_int())
+			return
+	cursor_fence.fence = Rect2i()
+
+
+## Lays out the Windows desktop to match the room: monitors shown on screens
+## to the left of the primary monitor's screen go to its left, and so on, so
+## the mouse moves between them the way you see them. The glasses' own display
+## goes at the far right end, fenced off from the cursor (Windows doesn't allow
+## gaps between monitors).
+## Returns true if anything moved.
+func _arrange_desktop() -> bool:
+	var sizes := {}
+	var primary := ""
+	for m in DesktopCapture.get_monitor_names():
+		var size := m.get_slice(" ", 1).split("x")
+		sizes[_device_of(m)] = Vector2i(size[0].to_int(), size[1].to_int())
+		if m.ends_with("at (0, 0)"):
+			primary = _device_of(m)
+	if primary.is_empty():
+		return false
+
+	var primary_yaw := 0.0
 	for panel in panels:
-		panel.start_capture()
+		if panel.monitor_device == primary:
+			primary_yaw = panel.get_yaw()
+	# Larger yaw is further left. Sort each side nearest-first.
+	var left: Array[ScreenPanel] = []
+	var right: Array[ScreenPanel] = []
+	for panel in panels:
+		if panel.virtual_slot >= 0 and sizes.has(panel.monitor_device):
+			(left if panel.get_yaw() > primary_yaw else right).append(panel)
+	left.sort_custom(func(a, b): return a.get_yaw() < b.get_yaw())
+	right.sort_custom(func(a, b): return a.get_yaw() > b.get_yaw())
+
+	var positions := {primary: Vector2i.ZERO}
+	var x := 0
+	for panel in left:
+		x -= sizes[panel.monitor_device].x
+		positions[panel.monitor_device] = Vector2i(x, 0)
+	x = sizes[primary].x
+	for panel in right:
+		positions[panel.monitor_device] = Vector2i(x, 0)
+		x += sizes[panel.monitor_device].x
+	var glasses_device := _glasses_device()
+	if sizes.has(glasses_device):
+		positions[glasses_device] = Vector2i(x, 0)
+
+	var current := VirtualDisplays.get_display_positions()
+	var changed := false
+	for device in positions:
+		if current.get(device) != positions[device]:
+			changed = true
+	if not changed:
+		return false
+	print("Arranging desktop: ", positions)
+	VirtualDisplays.arrange_displays(positions)
+	return true
 
 
 func _go_fullscreen_on_glasses() -> void:
@@ -456,7 +578,7 @@ func _build_settings_window() -> void:
 		_sync_settings())
 	_labelled(box, "Editing", _ui.screens)
 	box.add_child(_button_row([["Add virtual monitor", "add_virtual"], ["Add existing monitor", "add"]]))
-	box.add_child(_button_row([["Remove screen", "remove"], ["Grab / drop", "grab"]]))
+	box.add_child(_button_row([["Remove screen", "remove"], ["Grab / drop", "grab"], ["Line up screens", "line_up"]]))
 	_ui.notice = Label.new()
 	_ui.notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_ui.notice.add_theme_color_override("font_color", Color(1.0, 0.75, 0.4))
@@ -473,8 +595,7 @@ func _build_settings_window() -> void:
 	_ui.distance = _slider_row(box, "Distance", "%.2f m", 0.5, 6.0, 0.05, func(v): _set_distance(selected, v))
 	_ui.width = _slider_row(box, "Width", "%.2f m", 0.3, 6.0, 0.05, func(v): _set_width(selected, v))
 	_ui.height = _slider_row(box, "Height", "%+.1f°", -60.0, 60.0, 0.5, func(v):
-		selected.pin_pitch = deg_to_rad(v)
-		selected.apply_pin()
+		selected.set_pitch(deg_to_rad(v))
 		_save_config())
 
 	# Glasses
@@ -583,7 +704,7 @@ func _sync_settings() -> void:
 	_ui.resolution_row.visible = selected.virtual_slot >= 0
 	_ui.monitor.get_parent().visible = selected.virtual_slot < 0
 	_ui.resolution.select(VIRTUAL_SIZES.find(selected.virtual_size))
-	_ui.height.value = rad_to_deg(selected.pin_pitch)
+	_ui.height.value = rad_to_deg(selected.get_pitch())
 	_ui.fov.value = fov
 	_ui.edges.button_pressed = edges.visible
 	for i in _ui.mode.item_count:
@@ -596,7 +717,7 @@ func _sync_settings() -> void:
 
 func _build_tray() -> void:
 	tray_menu = PopupMenu.new()
-	for item in [["Grab / drop screen", "grab"], ["Add virtual monitor", "add_virtual"], ["Settings", "settings"],
+	for item in [["Grab / drop screen", "grab"], ["Add virtual monitor", "add_virtual"], ["Line up screens", "line_up"], ["Settings", "settings"],
 			["Show display edges", "edges"], ["Quit", "quit"]]:
 		tray_menu.add_item(item[0])
 		tray_menu.set_item_metadata(tray_menu.item_count - 1, item[1])
@@ -650,7 +771,8 @@ func _load_config() -> void:
 				continue
 			data.monitor = device
 			recreated = true
-		_add_panel(data.get("monitor", ""), data)
+		# Recreated virtual monitors are captured once Windows has them up (refit).
+		_add_panel(data.get("monitor", ""), data, slot < 0)
 	if recreated:
 		_refit_soon()
 

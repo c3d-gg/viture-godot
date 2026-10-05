@@ -6,9 +6,9 @@ Ideas for the virtual screen (remaking the useful parts of SpaceWalker) and the 
 
 - [x] **Multiple virtual screens** — several pinned panels, each showing its own monitor; extra
       monitors come from the SudoVDA virtual display driver.
-- [ ] **Arrange virtual monitors on the desktop** — Windows places new ones to the right of the
-      glasses' display, so the mouse passes through the glasses to reach them. Position them next to
-      the laptop screen (and the glasses out of the way) with `SetDisplayConfig`.
+- [x] **Arrange virtual monitors on the desktop** — ordered left-to-right to match the screens in the
+      room; the glasses' display goes at the far end and a cursor fence keeps the mouse off it
+      (Windows closes any gap between monitors).
 - [ ] **Single-window capture** — pin one app window (video, chat, doc) instead of a whole desktop.
       Windows Graphics Capture supports windows via `CreateForWindow`.
 - [ ] **Sharper text** — better filtering/mipmaps or supersampling so small text stays readable at

@@ -110,6 +110,11 @@ Duplication doesn't work on hybrid-GPU laptops when the captured monitor is on t
 Each glasses display mode appears to Windows as a separate monitor that may not be on the desktop yet;
 `VitureGlasses.extend_desktop()` applies Extend (same as Win+P) and the demo calls it after a mode switch.
 
+Virtual monitors come from the SudoVDA driver (`VirtualDisplays`) and exist only while the app runs. The
+desktop is arranged to match the room (`VirtualDisplays.arrange_displays`): monitors whose screens sit left
+of the primary monitor's screen go to its left, and so on. The glasses' display goes at the far end, and
+`CursorFence` keeps the mouse off it, since Windows doesn't allow gaps between monitors.
+
 ## License
 
 MIT; see [LICENSE](LICENSE). The VITURE Glasses SDK is not included and has its own terms. The SudoVDA

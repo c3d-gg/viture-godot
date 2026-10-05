@@ -104,7 +104,100 @@ std::wstring find_display_name(const LUID &p_adapter, UINT p_target) {
 	return L"";
 }
 
+struct ActiveConfig {
+	std::vector<DISPLAYCONFIG_PATH_INFO> paths;
+	std::vector<DISPLAYCONFIG_MODE_INFO> modes;
+};
+
+bool query_active_config(ActiveConfig &r_config) {
+	UINT32 path_count = 0, mode_count = 0;
+	if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count) != ERROR_SUCCESS) {
+		return false;
+	}
+	r_config.paths.resize(path_count);
+	r_config.modes.resize(mode_count);
+	if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &path_count, r_config.paths.data(), &mode_count, r_config.modes.data(), nullptr) != ERROR_SUCCESS) {
+		return false;
+	}
+	r_config.paths.resize(path_count);
+	r_config.modes.resize(mode_count);
+	return true;
+}
+
+String source_device_name(const DISPLAYCONFIG_PATH_INFO &p_path) {
+	DISPLAYCONFIG_SOURCE_DEVICE_NAME source = {};
+	source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+	source.header.size = sizeof(source);
+	source.header.adapterId = p_path.sourceInfo.adapterId;
+	source.header.id = p_path.sourceInfo.id;
+	if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS) {
+		return String();
+	}
+	return String(source.viewGdiDeviceName);
+}
+
 } // namespace
+
+Dictionary VirtualDisplays::get_display_positions() {
+	Dictionary result;
+	ActiveConfig config;
+	if (!query_active_config(config)) {
+		return result;
+	}
+	for (const DISPLAYCONFIG_PATH_INFO &path : config.paths) {
+		UINT32 index = path.sourceInfo.modeInfoIdx;
+		if (index == DISPLAYCONFIG_PATH_MODE_IDX_INVALID || index >= config.modes.size()) {
+			continue;
+		}
+		const POINTL &pos = config.modes[index].sourceMode.position;
+		result[source_device_name(path)] = Vector2i(pos.x, pos.y);
+	}
+	return result;
+}
+
+bool VirtualDisplays::arrange_displays(const Dictionary &p_positions) {
+	ActiveConfig config;
+	if (!query_active_config(config)) {
+		UtilityFunctions::push_error("VirtualDisplays: QueryDisplayConfig failed.");
+		return false;
+	}
+	bool changed = false;
+	for (const DISPLAYCONFIG_PATH_INFO &path : config.paths) {
+		UINT32 index = path.sourceInfo.modeInfoIdx;
+		if (index == DISPLAYCONFIG_PATH_MODE_IDX_INVALID || index >= config.modes.size()) {
+			continue;
+		}
+		String name = source_device_name(path);
+		if (!p_positions.has(name)) {
+			continue;
+		}
+		Vector2i target = p_positions[name];
+		POINTL &pos = config.modes[index].sourceMode.position;
+		if (pos.x != target.x || pos.y != target.y) {
+			pos.x = target.x;
+			pos.y = target.y;
+			changed = true;
+		}
+	}
+	if (!changed) {
+		return true;
+	}
+	// Exactly as asked first; if Windows rejects the layout, let it adjust.
+	LONG result = SetDisplayConfig(static_cast<UINT32>(config.paths.size()), config.paths.data(),
+			static_cast<UINT32>(config.modes.size()), config.modes.data(),
+			SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_SAVE_TO_DATABASE);
+	if (result != ERROR_SUCCESS) {
+		UtilityFunctions::print("VirtualDisplays: exact layout rejected (", static_cast<int64_t>(result), "); letting Windows adjust it.");
+		result = SetDisplayConfig(static_cast<UINT32>(config.paths.size()), config.paths.data(),
+				static_cast<UINT32>(config.modes.size()), config.modes.data(),
+				SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_SAVE_TO_DATABASE | SDC_ALLOW_CHANGES);
+	}
+	if (result != ERROR_SUCCESS) {
+		UtilityFunctions::push_error("VirtualDisplays: SetDisplayConfig failed (", static_cast<int64_t>(result), ").");
+		return false;
+	}
+	return true;
+}
 
 VirtualDisplays::~VirtualDisplays() {
 	_exit_tree();
@@ -283,4 +376,6 @@ void VirtualDisplays::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_display", "slot", "width", "height", "refresh_rate"), &VirtualDisplays::add_display);
 	ClassDB::bind_method(D_METHOD("remove_display", "slot"), &VirtualDisplays::remove_display);
 	ClassDB::bind_method(D_METHOD("remove_all"), &VirtualDisplays::remove_all);
+	ClassDB::bind_static_method("VirtualDisplays", D_METHOD("arrange_displays", "positions"), &VirtualDisplays::arrange_displays);
+	ClassDB::bind_static_method("VirtualDisplays", D_METHOD("get_display_positions"), &VirtualDisplays::get_display_positions);
 }

@@ -35,6 +35,13 @@ public:
 	bool remove_display(int p_slot);
 	void remove_all();
 
+	// Moves desktop displays: keys are device names ("\\.\DISPLAYn"), values
+	// Vector2i top-left positions. The primary display must stay at (0, 0).
+	// Saved to the Windows display database, like Settings > Display.
+	static bool arrange_displays(const Dictionary &p_positions);
+	// Current desktop position of each active display, keyed by device name.
+	static Dictionary get_display_positions();
+
 protected:
 	static void _bind_methods();
 
